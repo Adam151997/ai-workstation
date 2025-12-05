@@ -4,7 +4,7 @@ import { auth } from '@clerk/nextjs/server';
 import { query } from '@/lib/db';
 import { chunkText } from '@/lib/document-processor';
 import { generateEmbedding, upsertVectors } from '@/lib/pinecone';
-import { auditFromRequest } from '@/lib/audit';
+import { logArtifactAction } from '@/lib/audit';
 
 export const maxDuration = 300;
 
@@ -115,14 +115,14 @@ export async function POST(req: NextRequest) {
     await upsertVectors(vectors);
 
     // Audit log
-    await auditFromRequest(req, userId, 'artifact.create', 'artifact', documentId, {
+    await logArtifactAction(userId, 'artifact.create', documentId, {
       title,
       artifactType,
       mode,
       filename,
       chunksCreated: chunks.length,
       contentLength: textContent.length,
-    });
+    }, req);
 
     console.log(`[Artifact Save] ✅ Successfully saved artifact: ${title}`);
 

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { generateEmbedding, querySimilarVectors } from '@/lib/pinecone';
 import { query } from '@/lib/db';
-import { auditFromRequest } from '@/lib/audit';
+import { logSearchAction } from '@/lib/audit';
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,12 +37,12 @@ export async function POST(req: NextRequest) {
 
     if (matches.length === 0) {
       // Audit search with no results
-      await auditFromRequest(req, userId, 'search.rag', 'search', undefined, {
+      await logSearchAction(userId, 'rag.search', {
         query: userQuery.substring(0, 200),
         mode,
         topK,
         resultsFound: 0,
-      });
+      }, req);
 
       return NextResponse.json({
         success: true,
@@ -91,14 +91,14 @@ export async function POST(req: NextRequest) {
     });
 
     // Audit search with results
-    await auditFromRequest(req, userId, 'search.rag', 'search', undefined, {
+    await logSearchAction(userId, 'rag.search', {
       query: userQuery.substring(0, 200),
       mode,
       topK,
       resultsFound: chunks.length,
       topScore: matches[0]?.score || 0,
       documentsSearched: [...new Set(chunks.map((c: any) => c.document_id))].length,
-    });
+    }, req);
 
     console.log(`[RAG] ✅ Built context from ${chunks.length} chunks`);
 
