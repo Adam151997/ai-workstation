@@ -328,7 +328,7 @@ export async function POST(req: Request) {
                     lastMessage.content,
                     userId,
                     modeKey,
-                    3 // Top 3 most relevant chunks
+                    { topK: 3 } // Top 3 most relevant chunks
                 );
 
                 if (ragContext.hasContext) {
