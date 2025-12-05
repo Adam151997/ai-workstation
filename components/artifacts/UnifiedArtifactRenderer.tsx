@@ -100,7 +100,7 @@ export function UnifiedArtifactRenderer({ artifact, status, onExport, mode = 'Sa
                     </div>
                 </div>
                 <div className="p-4 space-y-3 max-h-[600px] overflow-y-auto">
-                    {artifact.leads.map((lead: { name: string; company: string; industry: string; score: number }, index: number) => (
+                    {artifact.leads.map((lead, index) => (
                         <div key={index} className="p-4 border rounded-lg hover:shadow-md transition-shadow">
                             <h4 className="font-semibold text-gray-900">{lead.name}</h4>
                             <p className="text-sm text-gray-600">{lead.company}</p>
