@@ -3,10 +3,14 @@ import { z } from 'zod';
 
 // Define the schema for the structured data (the "Artifact")
 export const LeadsSchema = z.object({
+    type: z.literal('leads').default('leads'),
+    title: z.string().default('Generated Leads'),
     leads: z.array(
         z.object({
             id: z.number().describe("Unique ID for the lead."),
             name: z.string().describe("Full name of the prospect."),
+            company: z.string().optional().describe("Company name."),
+            industry: z.string().optional().describe("Industry sector."),
             score: z.number().describe("Lead score from 1 to 100."),
             status: z.enum(['New', 'Contacted', 'Qualified', 'Unqualified']).describe("Current qualification status."),
             source: z.string().describe("Marketing channel the lead came from."),

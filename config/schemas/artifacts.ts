@@ -2,7 +2,7 @@
 // Unified artifact type system for all generative artifacts
 
 import { z } from 'zod';
-import { LeadsArtifactSchema, LeadsArtifact } from './leads';
+import { LeadsSchema, LeadsArtifact } from './leads';
 
 // ============================================
 // Base Artifact Schema
@@ -132,7 +132,7 @@ export type ChartArtifact = z.infer<typeof ChartArtifactSchema>;
 export type Artifact = DocumentArtifact | TableArtifact | ChartArtifact | LeadsArtifact;
 
 // Re-export for convenience
-export { LeadsArtifactSchema };
+export { LeadsSchema };
 export type { LeadsArtifact };
 
 // ============================================
