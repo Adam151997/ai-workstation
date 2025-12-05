@@ -2,6 +2,7 @@
 // Unified artifact type system for all generative artifacts
 
 import { z } from 'zod';
+import { LeadsArtifactSchema, LeadsArtifact } from './leads';
 
 // ============================================
 // Base Artifact Schema
@@ -128,11 +129,11 @@ export type ChartArtifact = z.infer<typeof ChartArtifactSchema>;
 // Union Type for All Artifacts
 // ============================================
 
-export type Artifact = DocumentArtifact | TableArtifact | ChartArtifact | z.infer<typeof LeadsArtifactSchema>;
+export type Artifact = DocumentArtifact | TableArtifact | ChartArtifact | LeadsArtifact;
 
-// Import existing LeadsArtifact for backward compatibility
-export { LeadsArtifactSchema } from './leads';
-export type { LeadsArtifact } from './leads';
+// Re-export for convenience
+export { LeadsArtifactSchema };
+export type { LeadsArtifact };
 
 // ============================================
 // Artifact Type Guards
@@ -150,7 +151,7 @@ export function isChartArtifact(artifact: Artifact): artifact is ChartArtifact {
     return artifact.type === 'chart';
 }
 
-export function isLeadsArtifact(artifact: Artifact): artifact is z.infer<typeof LeadsArtifactSchema> {
+export function isLeadsArtifact(artifact: Artifact): artifact is LeadsArtifact {
     return artifact.type === 'leads';
 }
 
