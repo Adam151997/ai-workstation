@@ -1,0 +1,26 @@
+// QUICK FIX INSTRUCTIONS
+
+Find line 290 in D:\ai-workstation\app\api\chat\route.ts:
+
+CURRENT CODE (line 290-292):
+```typescript
+// ✅ TOOLS NOW ENABLED FOR ALL PROVIDERS
+const enableToolsForThisRequest = ENABLE_TOOLS && supportsTools;
+console.log(`[Agent] Tools enabled: ${enableToolsForThisRequest} for ${modelInfo?.provider || 'unknown'} provider`);
+```
+
+REPLACE WITH:
+```typescript
+// ⚠️ TEMPORARILY DISABLE TOOLS FOR OPENAI (Composio schema compatibility issues)
+const enableToolsForThisRequest = ENABLE_TOOLS && supportsTools && modelInfo?.provider !== 'openai';
+console.log(`[Agent] Tools enabled: ${enableToolsForThisRequest} for ${modelInfo?.provider || 'unknown'} provider`);
+if (modelInfo?.provider === 'openai') {
+    console.log(`[Agent] ⚠️ Tools temporarily disabled for OpenAI due to Composio schema issues`);
+}
+```
+
+THE ONLY CHANGE ON LINE 291:
+Add: `&& modelInfo?.provider !== 'openai'` at the end
+
+FROM: `const enableToolsForThisRequest = ENABLE_TOOLS && supportsTools;`
+TO:   `const enableToolsForThisRequest = ENABLE_TOOLS && supportsTools && modelInfo?.provider !== 'openai';`
