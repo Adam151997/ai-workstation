@@ -483,7 +483,7 @@ export async function POST(req: Request) {
             system: enhancedSystemPrompt, // Uses RAG-enhanced prompt
             messages: messages as CoreMessage[],
             tools: Object.keys(aiTools).length > 0 ? aiTools : undefined,
-            maxSteps: 5,
+            maxToolRoundtrips: 5,
         });
 
         // Stream response
