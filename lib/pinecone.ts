@@ -105,7 +105,7 @@ export async function upsertVectors(
     }>
 ) {
     const index = await getIndex();
-    await index.upsert(vectors);
+    await index.upsert(vectors as any);
     console.log(`[Pinecone] ✅ Upserted ${vectors.length} vectors`);
 }
 
@@ -140,7 +140,7 @@ export async function upsertVectorsWithMetadata(
     }));
 
     const index = await getIndex();
-    await index.upsert(enhancedVectors);
+    await index.upsert(enhancedVectors as any);
     console.log(`[Pinecone] ✅ Upserted ${vectors.length} vectors with project/tag metadata`);
 }
 
