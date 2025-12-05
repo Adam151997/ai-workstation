@@ -91,6 +91,7 @@ interface VectorMetadata {
     projectId?: string;
     projectName?: string;
     tags?: string[];
+    [key: string]: string | number | string[] | undefined; // Index signature for Pinecone
 }
 
 /**
