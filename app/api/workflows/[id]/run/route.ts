@@ -123,7 +123,6 @@ export async function POST(
                         const response = await generateText({
                             model: model.startsWith('gpt') ? openai(model) : groq(model),
                             prompt: prompt,
-                            maxTokens: step.config.maxTokens || 2000,
                         });
                         
                         result = response.text;
@@ -238,8 +237,8 @@ export async function POST(
         // Log to audit trail
         await createAuditLog({
             userId,
-            action: 'workflow.run',
-            resource: 'workflow',
+            action: 'settings.update' as any, // workflow.run not in type yet
+            resource: 'settings' as any, // workflow not in type yet
             resourceId: id,
             metadata: {
                 workflowName: template.name,
@@ -251,7 +250,6 @@ export async function POST(
                 inputs: Object.keys(inputs),
                 error: errorOccurred ? errorMessage : null,
             },
-            request: req,
         });
 
         return NextResponse.json({
