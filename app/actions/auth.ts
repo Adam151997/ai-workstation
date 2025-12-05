@@ -29,6 +29,11 @@ export async function getConnectLink(toolName: string): Promise<string> {
             redirectUri: `${redirectBase}/workstation?toolConnected=${toolName}` // Success redirect
         });
 
+        // Handle null redirectUrl
+        if (!connection.redirectUrl) {
+            throw new Error(`No redirect URL returned for ${toolName}`);
+        }
+
         return connection.redirectUrl;
 
     } catch (error) {
