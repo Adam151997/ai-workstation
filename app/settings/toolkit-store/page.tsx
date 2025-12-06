@@ -283,8 +283,6 @@ function ToolkitCard({ toolkit, onInstall, isInstalling, featured }: {
 
             <div className="flex items-center justify-between mt-4 pt-4 border-t" style={{ borderColor: 'var(--border-primary)' }}>
                 <div className="flex items-center gap-3 text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                    <span>{toolkit.tool_count} tools</span>
-                    <span>•</span>
                     <span>{toolkit.install_count} installs</span>
                 </div>
 
@@ -345,7 +343,7 @@ function ToolkitListItem({ toolkit, onInstall, isInstalling }: {
 
             {/* Stats */}
             <div className="flex items-center gap-4 text-sm" style={{ color: 'var(--text-tertiary)' }}>
-                <span>{toolkit.tool_count} tools</span>
+                <span>{toolkit.install_count} installs</span>
             </div>
 
             {/* Action */}
