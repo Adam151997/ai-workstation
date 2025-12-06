@@ -31,6 +31,16 @@ export {
     quickRoute,
 } from './router';
 
+// Agent Crew (Orchestrator)
+export {
+    AgentCrew,
+    CREW_CONFIGS,
+    createCrew,
+    createCustomCrew,
+    getDefaultCrew,
+    processWithCrew,
+} from './crew';
+
 // Specialist Agents
 export {
     GeneralAgent,
