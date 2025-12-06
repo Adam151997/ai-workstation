@@ -19,6 +19,7 @@ interface Cell {
     dependencies: string[];
     agent_preference: string;
     timeout_ms: number;
+    retry_on_error: boolean;
     status: string;
     output: any;
 }
