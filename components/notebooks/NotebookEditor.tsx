@@ -303,7 +303,7 @@ export function NotebookEditor({ notebookId }: NotebookEditorProps) {
             output: null,
             error_message: undefined,
             reasoning: undefined,
-            execution_log: undefined,
+            execution_log: [],
         })));
         setRunStatus(null);
         setIsPaused(false);
