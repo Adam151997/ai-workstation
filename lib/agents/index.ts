@@ -22,3 +22,15 @@ export {
     getSpecialistRoles,
     getAgentByKeywords,
 } from './configs';
+
+// Specialist Agents
+export {
+    GeneralAgent,
+    SalesAgent,
+    MarketingAgent,
+    ResearchAgent,
+    CodeAgent,
+    DataAgent,
+    createSpecialistAgent,
+    SPECIALIST_AGENTS,
+} from './specialists';
