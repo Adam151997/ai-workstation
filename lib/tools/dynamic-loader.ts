@@ -9,7 +9,7 @@ import { McpClient, mcpPool, McpTool, CallToolResult } from '@/lib/mcp';
 // Types
 // =============================================================================
 
-interface LoadedTool {
+export interface LoadedTool {
     name: string;
     description: string;
     parameters?: Record<string, any>;
