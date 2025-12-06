@@ -20,9 +20,7 @@ export { generateArtifact } from "./artifact-generation";
 // ETL sync jobs
 export {
     etlSyncJob,
-    googleDriveSyncJob,
-    gmailSyncJob,
-    notionSyncJob,
+    scheduledSyncJob,
 } from "./etl-sync";
 
 // Re-export types only (no runtime imports)
