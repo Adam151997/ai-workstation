@@ -19,6 +19,7 @@ import { RouterAgent, getRouter } from './router';
 import { createSpecialistAgent } from './specialists';
 import { BaseAgent } from './base';
 import { LoadedTool, loadUserToolkits } from '@/lib/tools/dynamic-loader';
+import { buildMemoryContext, learnFromConversation } from './memory';
 
 // =============================================================================
 // Agent Crew Class
@@ -575,25 +576,50 @@ export function getDefaultCrew(): AgentCrew {
 // =============================================================================
 
 /**
- * Process a query using the default crew
+ * Process a query using the default crew with memory support
  */
 export async function processWithCrew(
     query: string,
     userId: string,
     conversationId: string,
-    history: AgentMessage[] = []
+    history: AgentMessage[] = [],
+    options: { useMemory?: boolean; learnFromResponse?: boolean } = {}
 ): Promise<AgentResponse> {
+    const { useMemory = true, learnFromResponse = true } = options;
     const crew = getDefaultCrew();
 
     // Load user's tools
     const toolkits = await loadUserToolkits(userId);
     const tools: LoadedTool[] = toolkits.flatMap(t => t.tools);
 
+    // Build memory context if enabled
+    const memory = useMemory ? await buildMemoryContext(userId, query) : undefined;
+
     const context: AgentContext = {
         userId,
         conversationId,
         tools,
+        memory,
     };
 
-    return crew.process(query, context, history);
+    // Process the query
+    const response = await crew.process(query, context, history);
+
+    // Learn from the conversation if enabled
+    if (learnFromResponse && response.content) {
+        try {
+            await learnFromConversation(
+                userId,
+                [
+                    { role: 'user', content: query },
+                    { role: 'assistant', content: response.content },
+                ],
+                response.agentRole
+            );
+        } catch (error) {
+            console.warn('[Crew] Failed to learn from conversation:', error);
+        }
+    }
+
+    return response;
 }

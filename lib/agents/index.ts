@@ -41,6 +41,18 @@ export {
     processWithCrew,
 } from './crew';
 
+// Memory System
+export {
+    MemoryManager,
+    getMemoryManager,
+    storeMemory,
+    getRelevantMemories,
+    buildMemoryContext,
+    learnFromConversation,
+    type StoredMemory,
+    type MemorySearchOptions,
+} from './memory';
+
 // Specialist Agents
 export {
     GeneralAgent,
