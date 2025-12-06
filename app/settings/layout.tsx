@@ -14,10 +14,17 @@ import {
     ChevronLeft,
     Zap,
     BarChart3,
-    CreditCard
+    CreditCard,
+    Store
 } from 'lucide-react';
 
 const settingsNav = [
+    {
+        name: 'Toolkit Store',
+        href: '/settings/toolkit-store',
+        icon: Store,
+        description: 'Install app integrations',
+    },
     {
         name: 'Observability',
         href: '/settings/observability',
