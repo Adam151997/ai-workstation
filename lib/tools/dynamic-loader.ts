@@ -1,11 +1,14 @@
 // lib/tools/dynamic-loader.ts
 // Dynamic toolkit loader - loads only user's installed and connected toolkits
+// Supports Composio integrations and custom MCP servers (via proper MCP protocol)
 
 import { query } from '@/lib/db';
+import { McpClient, mcpPool, McpTool, CallToolResult } from '@/lib/mcp';
 
 interface LoadedTool {
     name: string;
     description: string;
+    parameters?: Record<string, any>;
     toolkit: string;
     toolkitId: string;
     execute: (params: any) => Promise<any>;
@@ -33,6 +36,10 @@ interface UserToolkitRow {
     composio_app_id?: string;
     available_actions?: string[];
 }
+
+// =============================================================================
+// Main Loader Functions
+// =============================================================================
 
 /**
  * Load all connected toolkits and their tools for a user
@@ -94,12 +101,15 @@ async function loadToolkitTools(toolkit: UserToolkitRow): Promise<LoadedTool[]> 
         }
     }
 
-    // For custom MCP toolkits
+    // For custom MCP toolkits - use proper MCP protocol
     if (toolkit.custom_mcp_url) {
         try {
-            const mcpTools = await loadMcpTools(
+            const mcpTools = await loadMcpToolsWithProtocol(
+                toolkit.id,
                 toolkit.custom_mcp_url,
-                toolkit.custom_config || {}
+                toolkit.custom_config || {},
+                toolkit.enabled_actions || [],
+                toolkit.disabled_actions || []
             );
             tools.push(...mcpTools);
         } catch (error) {
@@ -109,6 +119,10 @@ async function loadToolkitTools(toolkit: UserToolkitRow): Promise<LoadedTool[]> 
 
     return tools;
 }
+
+// =============================================================================
+// Composio Integration
+// =============================================================================
 
 /**
  * Load tools from Composio for a connected app
@@ -146,11 +160,9 @@ async function loadComposioTools(
 
         // Filter actions based on user preferences
         const filteredActions = actions.filter((action: any) => {
-            // If user has enabled specific actions, only include those
             if (enabledActions.length > 0) {
                 return enabledActions.includes(action.name);
             }
-            // Otherwise, exclude disabled actions
             return !disabledActions.includes(action.name);
         });
 
@@ -158,6 +170,7 @@ async function loadComposioTools(
         return filteredActions.map((action: any) => ({
             name: action.name,
             description: action.description || `${action.name} action`,
+            parameters: action.parameters,
             toolkit: appId,
             toolkitId: connectionId,
             execute: createComposioExecutor(action.name, connectionId, composioApiKey),
@@ -198,15 +211,109 @@ function createComposioExecutor(actionName: string, connectionId: string, apiKey
     };
 }
 
+// =============================================================================
+// MCP Protocol Integration
+// =============================================================================
+
 /**
- * Load tools from a custom MCP server
+ * Load tools from a custom MCP server using proper MCP protocol
  */
-async function loadMcpTools(
+async function loadMcpToolsWithProtocol(
+    toolkitId: string,
     mcpUrl: string,
-    config: Record<string, any>
+    config: Record<string, any>,
+    enabledActions: string[],
+    disabledActions: string[]
 ): Promise<LoadedTool[]> {
     try {
-        // Get available tools from MCP server
+        // Get or create MCP client from pool
+        const client = await mcpPool.getClient(toolkitId, {
+            url: mcpUrl,
+            headers: config.headers,
+            transport: config.transport || 'http',
+            timeout: config.timeout || 30000,
+        });
+
+        // List available tools using MCP protocol
+        const mcpTools = await client.getAllTools();
+
+        // Filter tools based on user preferences
+        const filteredTools = mcpTools.filter((tool: McpTool) => {
+            if (enabledActions.length > 0) {
+                return enabledActions.includes(tool.name);
+            }
+            return !disabledActions.includes(tool.name);
+        });
+
+        // Convert to LoadedTool format
+        return filteredTools.map((tool: McpTool) => ({
+            name: tool.name,
+            description: tool.description || '',
+            parameters: tool.inputSchema,
+            toolkit: 'mcp',
+            toolkitId: toolkitId,
+            execute: createMcpExecutor(toolkitId, tool.name),
+        }));
+
+    } catch (error) {
+        console.error(`[ToolLoader] MCP protocol error for ${mcpUrl}:`, error);
+        
+        // Fallback to simple REST if MCP protocol fails
+        console.log(`[ToolLoader] Falling back to REST for ${mcpUrl}`);
+        return loadMcpToolsRest(mcpUrl, config, enabledActions, disabledActions);
+    }
+}
+
+/**
+ * Create an executor function for an MCP tool (using proper protocol)
+ */
+function createMcpExecutor(toolkitId: string, toolName: string) {
+    return async (params: any): Promise<any> => {
+        const client = mcpPool.getConnectedClient(toolkitId);
+        
+        if (!client) {
+            throw new Error('MCP client not connected');
+        }
+
+        const result: CallToolResult = await client.callTool(toolName, params);
+
+        // Extract text content from result
+        if (result.isError) {
+            const errorText = result.content
+                .filter(c => c.type === 'text')
+                .map(c => c.text)
+                .join('\n');
+            throw new Error(errorText || 'Tool execution failed');
+        }
+
+        // Return appropriate content format
+        if (result.content.length === 1 && result.content[0].type === 'text') {
+            try {
+                // Try to parse as JSON
+                return JSON.parse(result.content[0].text || '{}');
+            } catch {
+                return result.content[0].text;
+            }
+        }
+
+        return result.content;
+    };
+}
+
+// =============================================================================
+// REST Fallback (for non-MCP servers)
+// =============================================================================
+
+/**
+ * Load tools from a server using simple REST API (fallback)
+ */
+async function loadMcpToolsRest(
+    mcpUrl: string,
+    config: Record<string, any>,
+    enabledActions: string[],
+    disabledActions: string[]
+): Promise<LoadedTool[]> {
+    try {
         const response = await fetch(`${mcpUrl}/tools`, {
             headers: {
                 'Content-Type': 'application/json',
@@ -215,32 +322,41 @@ async function loadMcpTools(
         });
 
         if (!response.ok) {
-            throw new Error(`MCP server error: ${response.status}`);
+            throw new Error(`REST API error: ${response.status}`);
         }
 
         const data = await response.json();
         const tools = data.tools || [];
 
-        return tools.map((tool: any) => ({
+        // Filter tools
+        const filteredTools = tools.filter((tool: any) => {
+            if (enabledActions.length > 0) {
+                return enabledActions.includes(tool.name);
+            }
+            return !disabledActions.includes(tool.name);
+        });
+
+        return filteredTools.map((tool: any) => ({
             name: tool.name,
             description: tool.description,
-            toolkit: 'custom',
+            parameters: tool.inputSchema || tool.parameters,
+            toolkit: 'rest',
             toolkitId: mcpUrl,
-            execute: createMcpExecutor(mcpUrl, tool.name, config),
+            execute: createRestExecutor(mcpUrl, tool.name, config),
         }));
 
     } catch (error) {
-        console.error(`[ToolLoader] MCP error for ${mcpUrl}:`, error);
+        console.error(`[ToolLoader] REST fallback error for ${mcpUrl}:`, error);
         return [];
     }
 }
 
 /**
- * Create an executor function for an MCP tool
+ * Create an executor function for a REST-based tool
  */
-function createMcpExecutor(mcpUrl: string, toolName: string, config: Record<string, any>) {
+function createRestExecutor(baseUrl: string, toolName: string, config: Record<string, any>) {
     return async (params: any) => {
-        const response = await fetch(`${mcpUrl}/execute`, {
+        const response = await fetch(`${baseUrl}/execute`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -253,12 +369,16 @@ function createMcpExecutor(mcpUrl: string, toolName: string, config: Record<stri
         });
 
         if (!response.ok) {
-            throw new Error(`MCP execution failed: ${response.status}`);
+            throw new Error(`REST execution failed: ${response.status}`);
         }
 
         return response.json();
     };
 }
+
+// =============================================================================
+// Utility Functions
+// =============================================================================
 
 /**
  * Get a flat list of all available tools for a user
@@ -316,4 +436,18 @@ export async function getToolkitSummary(userId: string): Promise<{
         connected: parseInt(stats[0].connected),
         totalTools,
     };
+}
+
+/**
+ * Disconnect all MCP clients (cleanup)
+ */
+export function disconnectAllMcp(): void {
+    mcpPool.disconnectAll();
+}
+
+/**
+ * Get MCP connection status for all connected toolkits
+ */
+export function getMcpConnectionStatus(): Record<string, any> {
+    return mcpPool.getConnectionStatus();
 }
