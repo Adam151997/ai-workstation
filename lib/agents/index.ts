@@ -64,3 +64,6 @@ export {
     createSpecialistAgent,
     SPECIALIST_AGENTS,
 } from './specialists';
+
+// Critic Agent (existing - functional)
+export { reviewOutput, type CriticReview } from './critic';

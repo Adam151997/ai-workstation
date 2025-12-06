@@ -1,4 +1,4 @@
-// app/api/chat/route.ts - WITH RAG INTEGRATION + DYNAMIC USER TOOLKIT + AUDIT LOGGING + USAGE TRACKING
+// app/api/chat/route.ts - WITH RAG + DYNAMIC TOOLKIT + MULTI-AGENT SYSTEM
 import { groq } from '@ai-sdk/groq';
 import { openai } from '@ai-sdk/openai';
 import { streamText } from 'ai';
@@ -13,13 +13,21 @@ import { trackSimpleUsage, checkUserRateLimits } from '@/lib/billing/usage-track
 import { CoreMessage } from 'ai';
 import { z } from 'zod';
 
+// Agent System Imports
+import {
+    processWithCrew,
+    routeQuery,
+    quickRoute,
+    AGENT_CONFIGS,
+    AgentMessage,
+} from '@/lib/agents';
+
 export const maxDuration = 60;
 
-// Tools enabled with improved prompt controls
+// Feature flags
 const ENABLE_TOOLS = true;
-
-// RAG enabled
 const ENABLE_RAG = true;
+const ENABLE_AGENT_MODE = true; // New: Multi-agent routing
 
 // ✅ FIX: Convert MCP JSON Schema to Zod schema dynamically
 function jsonSchemaToZod(schema: any): z.ZodTypeAny {
@@ -69,7 +77,6 @@ function jsonSchemaToZod(schema: any): z.ZodTypeAny {
             for (const [key, propSchema] of Object.entries(schema.properties)) {
                 let propZod = jsonSchemaToZod(propSchema as any);
                 
-                // Make optional if not in required array
                 if (!required.includes(key)) {
                     propZod = propZod.optional();
                 }
@@ -80,7 +87,6 @@ function jsonSchemaToZod(schema: any): z.ZodTypeAny {
             return z.object(shape);
 
         default:
-            // Handle union types like "string,null"
             if (typeof schema.type === 'string' && schema.type.includes(',')) {
                 const types = schema.type.split(',').map((t: string) => t.trim());
                 const primaryType = types.find((t: string) => t !== 'null') || 'string';
@@ -96,44 +102,34 @@ function cleanJsonSchema(inputSchema: any): any {
         return { type: 'object', properties: {} };
     }
 
-    // Deep clone to avoid mutating original
     const schema = JSON.parse(JSON.stringify(inputSchema));
 
-    // Ensure type is "object" at root level
     if (!schema.type) {
         schema.type = 'object';
     }
 
-    // Ensure properties exist
     if (!schema.properties) {
         schema.properties = {};
     }
 
-    // Clean up properties recursively
     if (schema.properties) {
         for (const key in schema.properties) {
             const prop = schema.properties[key];
-            
-            // Remove 'default' values
             delete prop.default;
             
-            // Handle union types like "string,null" - convert to just "string"
             if (typeof prop.type === 'string' && prop.type.includes(',')) {
                 const types = prop.type.split(',').map((t: string) => t.trim());
                 prop.type = types.find((t: string) => t !== 'null') || 'string';
             }
             
-            // Handle "undefined" type
             if (prop.type === 'undefined') {
                 prop.type = 'string';
             }
 
-            // Ensure all properties have a valid type
             if (!prop.type) {
                 prop.type = 'string';
             }
 
-            // Clean nested arrays
             if (prop.type === 'array' && prop.items) {
                 delete prop.items.default;
                 if (!prop.items.type) {
@@ -143,9 +139,7 @@ function cleanJsonSchema(inputSchema: any): any {
         }
     }
 
-    // Remove $schema if present
     delete schema.$schema;
-
     return schema;
 }
 
@@ -162,12 +156,19 @@ function getModelInstance(modelId: string) {
         case 'groq':
             return groq(modelId);
         case 'openai':
-            // ✅ Use openai.chat() to force Chat Completions API
             return openai.chat(modelId);
         default:
             console.warn(`[Agent] Unknown provider: ${modelInfo.provider}`);
             return groq(DEFAULT_MODEL);
     }
+}
+
+// Convert messages to agent format
+function toAgentMessages(messages: CoreMessage[]): AgentMessage[] {
+    return messages.map(msg => ({
+        role: msg.role as 'user' | 'assistant' | 'system',
+        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+    }));
 }
 
 export async function POST(req: Request) {
@@ -199,20 +200,26 @@ export async function POST(req: Request) {
                 );
             }
         } catch (rateLimitError) {
-            // Don't block on rate limit errors, just log
             console.error('[Agent] Rate limit check failed:', rateLimitError);
         }
 
-        const { messages, selectedMode, selectedModel, requestArtifact } = await req.json();
+        const { 
+            messages, 
+            selectedMode, 
+            selectedModel, 
+            requestArtifact,
+            useAgentMode,        // New: Enable multi-agent routing
+            conversationId,      // New: For memory context
+        } = await req.json();
+
+        const lastMessage = messages[messages.length - 1];
+        const userMessage = lastMessage?.content?.toLowerCase() || '';
+        const originalMessage = lastMessage?.content || '';
 
         // ============================================
         // ARTIFACT DETECTION & GENERATION
         // ============================================
 
-        const lastMessage = messages[messages.length - 1];
-        const userMessage = lastMessage?.content?.toLowerCase() || '';
-
-        // Artifact keywords detection
         const isDocumentRequest =
             userMessage.includes('create a document') ||
             userMessage.includes('generate a document') ||
@@ -245,14 +252,12 @@ export async function POST(req: Request) {
 
         if (requestArtifact || isDocumentRequest || isTableRequest || isChartRequest) {
             console.log(`[Artifact] 🎨 Artifact request detected!`);
-            console.log(`[Artifact] Document: ${isDocumentRequest}, Table: ${isTableRequest}, Chart: ${isChartRequest}`);
 
             const { generateDocumentArtifact, generateTableArtifact, generateChartArtifact } = await import('@/app/actions/artifacts');
 
             let artifactType = requestArtifact || 'document';
             let artifactStream;
 
-            // Determine artifact type
             if (!requestArtifact) {
                 if (isChartRequest) {
                     artifactType = 'chart';
@@ -263,7 +268,6 @@ export async function POST(req: Request) {
                 }
             }
 
-            // Generate artifact
             switch (artifactType) {
                 case 'chart':
                     artifactStream = await generateChartArtifact(userMessage);
@@ -275,9 +279,6 @@ export async function POST(req: Request) {
                     artifactStream = await generateDocumentArtifact(userMessage);
             }
 
-            console.log(`[Artifact] ✅ Generating ${artifactType} artifact`);
-
-            // Return special artifact response
             return new Response(
                 JSON.stringify({
                     type: 'artifact',
@@ -291,7 +292,89 @@ export async function POST(req: Request) {
         }
 
         // ============================================
-        // REGULAR CHAT FLOW (if not artifact request)
+        // MULTI-AGENT MODE (NEW!)
+        // ============================================
+
+        if (ENABLE_AGENT_MODE && useAgentMode) {
+            console.log(`[Agent] 🤖 Multi-agent mode enabled`);
+
+            try {
+                // Get user's toolkits for routing context
+                const userToolSlugs = await getUserToolSlugs(userId);
+                
+                // Quick route to determine which agent
+                const routing = await routeQuery(originalMessage, userToolSlugs, toAgentMessages(messages));
+                
+                console.log(`[Agent] 🧭 Routing decision: ${routing.targetAgent} (confidence: ${routing.confidence})`);
+                console.log(`[Agent] 💭 Reasoning: ${routing.reasoning}`);
+
+                // Get agent info for UI
+                const agentConfig = AGENT_CONFIGS[routing.targetAgent];
+                const agentInfo = {
+                    id: agentConfig.identity.id,
+                    name: agentConfig.identity.name,
+                    avatar: agentConfig.identity.avatar,
+                    color: agentConfig.identity.color,
+                };
+
+                // Process with the crew (includes memory)
+                const agentResponse = await processWithCrew(
+                    originalMessage,
+                    userId,
+                    conversationId || `conv-${Date.now()}`,
+                    toAgentMessages(messages.slice(0, -1)), // Exclude current message
+                    { useMemory: true, learnFromResponse: true }
+                );
+
+                console.log(`[Agent] ✅ Agent response received (${agentResponse.content.length} chars)`);
+
+                // Track usage
+                const durationMs = Date.now() - startTime;
+                trackSimpleUsage({
+                    userId,
+                    usageType: 'chat',
+                    tokensInput: Math.ceil(originalMessage.length / 4),
+                    tokensOutput: Math.ceil(agentResponse.content.length / 4),
+                    modelId: 'gpt-4o-mini', // Agent uses this internally
+                    mode: selectedMode || 'Sales',
+                    durationMs,
+                    success: true,
+                    metadata: {
+                        agentMode: true,
+                        agent: routing.targetAgent,
+                        confidence: routing.confidence,
+                        toolsUsed: agentResponse.toolsUsed?.length || 0,
+                    },
+                }).catch(err => console.error('[Agent] Usage tracking error:', err));
+
+                // Return agent response with metadata
+                return new Response(
+                    JSON.stringify({
+                        type: 'agent',
+                        content: agentResponse.content,
+                        agent: agentInfo,
+                        routing: {
+                            targetAgent: routing.targetAgent,
+                            confidence: routing.confidence,
+                            reasoning: routing.reasoning,
+                        },
+                        toolsUsed: agentResponse.toolsUsed,
+                        metadata: agentResponse.metadata,
+                    }),
+                    {
+                        headers: { 'Content-Type': 'application/json' }
+                    }
+                );
+
+            } catch (agentError) {
+                console.error('[Agent] ❌ Multi-agent error:', agentError);
+                // Fall through to regular chat flow
+                console.log('[Agent] Falling back to regular chat...');
+            }
+        }
+
+        // ============================================
+        // REGULAR CHAT FLOW (existing implementation)
         // ============================================
 
         const modeKey = (selectedMode as Mode) || 'Sales';
@@ -300,19 +383,14 @@ export async function POST(req: Request) {
         const modelInfo = getModelInfo(modelId);
 
         console.log(`[Agent] Mode: ${modeKey}, Model: ${modelId} (${modelInfo?.provider || 'unknown'})`);
-        console.log(`[Agent] Conversation history: ${messages?.length || 0} messages`);
-
-        if (messages && messages.length > 0) {
-            console.log(`[Agent] Last message: "${lastMessage.content.substring(0, 100)}..."`);
-        }
 
         // ============================================
-        // ✨ DYNAMIC USER TOOLKIT LOADING ✨
+        // DYNAMIC USER TOOLKIT LOADING
         // ============================================
 
         console.log('[Toolkit] 🔧 Loading user\'s personalized toolkit...');
         const userToolSlugs = await getUserToolSlugs(userId);
-        console.log(`[Toolkit] ✅ User has ${userToolSlugs.length} tools enabled: ${userToolSlugs.join(', ')}`);
+        console.log(`[Toolkit] ✅ User has ${userToolSlugs.length} tools enabled`);
 
         // ============================================
         // RAG CONTEXT RETRIEVAL
@@ -328,37 +406,26 @@ export async function POST(req: Request) {
                     lastMessage.content,
                     userId,
                     modeKey,
-                    { topK: 3 } // Top 3 most relevant chunks
+                    { topK: 3 }
                 );
 
                 if (ragContext.hasContext) {
                     console.log(`[RAG] ✅ Found ${ragContext.sources.length} relevant chunks`);
                     enhancedSystemPrompt = injectRAGContext(modeConfig.systemPrompt, ragContext.context);
                     ragSources = ragContext.sources;
-                } else {
-                    console.log('[RAG] ℹ️ No relevant documents found');
                 }
             } catch (ragError) {
                 console.error('[RAG] ⚠️ Error retrieving context:', ragError);
-                // Continue without RAG if it fails
             }
         }
 
-        // ✅ Build tools using Zod schemas (AI SDK's preferred format)
+        // Build tools using Zod schemas
         const aiTools: Record<string, any> = {};
-
-        // Store MCP client reference for tool execution
         let mcpClientRef: ComposioMCPClient | null = null;
-
-        // Check if model supports tools
         const supportsTools = modelInfo?.supportsTools ?? true;
-
-        // ✅ TOOLS NOW ENABLED FOR ALL PROVIDERS
         const enableToolsForThisRequest = ENABLE_TOOLS && supportsTools;
-        console.log(`[Agent] Tools enabled: ${enableToolsForThisRequest} for ${modelInfo?.provider || 'unknown'} provider`);
 
         if (enableToolsForThisRequest) {
-            // ✅ PASS USER'S TOOL SLUGS TO MCP CLIENT
             const mcpClient = new ComposioMCPClient(modeKey, userId, userToolSlugs);
             mcpClientRef = mcpClient;
 
@@ -366,121 +433,65 @@ export async function POST(req: Request) {
                 const mcpTools = await mcpClient.getTools();
 
                 if (mcpTools.length > 0) {
-                    // ✅ LIMIT TOOLS TO 128 (Groq/OpenAI limit)
                     const MAX_TOOLS = 128;
-                    let limitedTools = mcpTools;
-                    if (mcpTools.length > MAX_TOOLS) {
-                        console.log(`[Agent] ⚠️ Too many tools (${mcpTools.length}), limiting to ${MAX_TOOLS}`);
-                        limitedTools = mcpTools.slice(0, MAX_TOOLS);
-                    }
+                    let limitedTools = mcpTools.slice(0, MAX_TOOLS);
 
-                    console.log(`[Agent] 📦 Loading ${limitedTools.length} tools from user's toolkit...`);
+                    console.log(`[Agent] 📦 Loading ${limitedTools.length} tools...`);
 
                     let successfullyLoaded = 0;
-                    let skipped = 0;
 
                     for (const mcpTool of limitedTools) {
                         try {
-                            // ✅ SKIP TOOLS WITH NO PROPERTIES (OpenAI requirement)
                             const hasProperties = mcpTool.inputSchema?.properties &&
                                 Object.keys(mcpTool.inputSchema.properties).length > 0;
 
-                            if (!hasProperties) {
-                                console.log(`[Agent] ⚠️ Skipping ${mcpTool.name}: no parameters`);
-                                skipped++;
-                                continue;
-                            }
+                            if (!hasProperties) continue;
 
-                            // ✅ Clean the JSON Schema first
                             const cleanedSchema = cleanJsonSchema(mcpTool.inputSchema);
-
-                            // DEBUG: Log first tool's cleaned schema
-                            if (successfullyLoaded === 0) {
-                                console.log(`[DEBUG] First tool schema (${mcpTool.name}):`, JSON.stringify(cleanedSchema, null, 2));
-                            }
-
-                            // ✅ Convert to Zod schema
                             const zodSchema = jsonSchemaToZod(cleanedSchema);
-
-                            // DEBUG: Log first tool's Zod schema
-                            if (successfullyLoaded === 0) {
-                                console.log(`[DEBUG] Zod schema created for ${mcpTool.name}`);
-                            }
-
-                            const enhancedDescription = mcpTool.description || `Execute ${mcpTool.name}`;
                             const toolName = mcpTool.name;
 
-                            // ✅ Use AI SDK v5 tool format with Zod (inputSchema instead of parameters)
                             aiTools[toolName] = {
-                                description: enhancedDescription,
+                                description: mcpTool.description || `Execute ${toolName}`,
                                 inputSchema: zodSchema,
                                 execute: async (args: Record<string, any>) => {
                                     console.log(`[Agent] 🔧 Executing: ${toolName}`);
-                                    console.log(`[Agent] Args:`, JSON.stringify(args, null, 2));
-
                                     try {
                                         const result = await mcpClient.executeTool(toolName, args);
-                                        console.log(`[Agent] ✅ Success:`, toolName);
-
-                                        return {
-                                            success: true,
-                                            result: result,
-                                            message: `Successfully executed ${toolName}`
-                                        };
+                                        return { success: true, result };
                                     } catch (error: any) {
-                                        console.error(`[Agent] ❌ Error:`, error);
-                                        return {
-                                            success: false,
-                                            error: error?.message || String(error),
-                                            message: `Failed to execute ${toolName}`
-                                        };
+                                        return { success: false, error: error?.message || String(error) };
                                     }
                                 }
                             };
 
                             successfullyLoaded++;
-                            
-                            // Only log first 10 tools to reduce noise
-                            if (successfullyLoaded <= 10) {
-                                console.log(`[Agent] ✓ Loaded tool: ${mcpTool.name}`);
-                            }
                         } catch (toolError) {
-                            console.error(`[Agent] ⚠️ Failed to load tool ${mcpTool.name}:`, toolError);
-                            skipped++;
+                            // Skip invalid tools
                         }
                     }
 
-                    console.log(`[Agent] ✅ Successfully loaded: ${successfullyLoaded} tools`);
-                    if (skipped > 0) {
-                        console.log(`[Agent] ⚠️ Skipped: ${skipped} tools (no params or invalid schema)`);
-                    }
-                } else {
-                    console.log(`[Agent] ℹ️ No tools available in user's toolkit`);
+                    console.log(`[Agent] ✅ Loaded: ${successfullyLoaded} tools`);
                 }
             } catch (mcpError) {
                 console.error(`[Agent] ❌ MCP error:`, mcpError);
-                console.log(`[Agent] Continuing without tools...`);
             }
-        } else {
-            console.log(`[Agent] ⚠️ Tools disabled for this request`);
         }
 
-        console.log(`[Agent] 🚀 Starting stream with ${Object.keys(aiTools).length} tools...`);
-
-        // Audit log for chat message (non-blocking)
+        // Audit log
         logChatAction(userId, 'chat.message', {
             mode: modeKey,
             model: modelId,
             messageLength: lastMessage?.content?.length || 0,
             toolCount: Object.keys(aiTools).length,
             ragSourceCount: ragSources.length,
-        }, req).catch(() => {}); // Fire and forget
+        }, req).catch(() => {});
 
         const modelInstance = getModelInstance(modelId);
 
         const result = streamText({
             model: modelInstance,
-            system: enhancedSystemPrompt, // Uses RAG-enhanced prompt
+            system: enhancedSystemPrompt,
             messages: messages as CoreMessage[],
             tools: Object.keys(aiTools).length > 0 ? aiTools : undefined,
         });
@@ -499,21 +510,13 @@ export async function POST(req: Request) {
 
                     console.log(`[Agent] ✓ Complete: ${fullText.length} chars`);
 
-                    // ============================================
-                    // USAGE TRACKING (estimate tokens from text length)
-                    // ============================================
+                    // Usage tracking
                     const durationMs = Date.now() - startTime;
-                    const inputText = lastMessage?.content || '';
-                    // Rough estimation: ~4 chars per token
-                    const estimatedInputTokens = Math.ceil(inputText.length / 4);
-                    const estimatedOutputTokens = Math.ceil(fullText.length / 4);
-                    
-                    // Track usage (fire and forget)
                     trackSimpleUsage({
                         userId,
                         usageType: 'chat',
-                        tokensInput: estimatedInputTokens,
-                        tokensOutput: estimatedOutputTokens,
+                        tokensInput: Math.ceil((lastMessage?.content?.length || 0) / 4),
+                        tokensOutput: Math.ceil(fullText.length / 4),
                         modelId,
                         mode: modeKey,
                         durationMs,
@@ -522,14 +525,12 @@ export async function POST(req: Request) {
                             toolCount: Object.keys(aiTools).length,
                             ragSourceCount: ragSources.length,
                         },
-                    }).catch(err => console.error('[Agent] Usage tracking error:', err));
+                    }).catch(() => {});
 
-                    // ✅ Only append sources if user asks about documents/sources
+                    // Append sources if asked
                     const askedAboutSources = userMessage.includes('source') ||
                         userMessage.includes('document') ||
-                        userMessage.includes('reference') ||
-                        userMessage.includes('where') ||
-                        userMessage.includes('citation');
+                        userMessage.includes('reference');
 
                     if (ragSources.length > 0 && askedAboutSources) {
                         const sourcesText = '\n\n📚 **Sources:**\n' +
@@ -542,8 +543,6 @@ export async function POST(req: Request) {
                     controller.close();
                 } catch (error) {
                     console.error('[Agent] ❌ Stream error:', error);
-                    
-                    // Track failed usage
                     trackSimpleUsage({
                         userId,
                         usageType: 'chat',
@@ -555,7 +554,6 @@ export async function POST(req: Request) {
                         success: false,
                         metadata: { error: (error as Error).message },
                     }).catch(() => {});
-                    
                     controller.error(error);
                 }
             }
