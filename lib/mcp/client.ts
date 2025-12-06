@@ -192,7 +192,7 @@ export class McpClient {
             clientInfo: this.config.clientInfo || DEFAULT_CLIENT_INFO,
         };
 
-        const result = await this.request<InitializeResult>('initialize', params as Record<string, unknown>);
+        const result = await this.request<InitializeResult>('initialize', params as unknown as Record<string, unknown>);
 
         this.serverInfo = result.serverInfo;
         this.serverCapabilities = result.capabilities;
@@ -236,7 +236,7 @@ export class McpClient {
             arguments: args,
         };
 
-        return this.request<CallToolResult>('tools/call', params as Record<string, unknown>);
+        return this.request<CallToolResult>('tools/call', params as unknown as Record<string, unknown>);
     }
 
     // =========================================================================
@@ -265,7 +265,7 @@ export class McpClient {
         }
 
         const params: ReadResourceParams = { uri };
-        return this.request<ReadResourceResult>('resources/read', params as Record<string, unknown>);
+        return this.request<ReadResourceResult>('resources/read', params as unknown as Record<string, unknown>);
     }
 
     // =========================================================================
@@ -294,7 +294,7 @@ export class McpClient {
         }
 
         const params: GetPromptParams = { name, arguments: args };
-        return this.request<GetPromptResult>('prompts/get', params as Record<string, unknown>);
+        return this.request<GetPromptResult>('prompts/get', params as unknown as Record<string, unknown>);
     }
 
     // =========================================================================
