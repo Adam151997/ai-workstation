@@ -23,6 +23,14 @@ export {
     getAgentByKeywords,
 } from './configs';
 
+// Router Agent
+export {
+    RouterAgent,
+    getRouter,
+    routeQuery,
+    quickRoute,
+} from './router';
+
 // Specialist Agents
 export {
     GeneralAgent,
