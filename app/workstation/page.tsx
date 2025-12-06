@@ -12,7 +12,7 @@ import { exportArtifact } from '@/lib/export/artifacts';
 import { getConnectionStatus } from '@/app/actions/auth';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MODES_CONFIG } from '@/config/modes';
-import { Command, Folder, Settings, Workflow, Sparkles, Zap } from 'lucide-react';
+import { Command, Folder, Settings, Workflow, Sparkles, Zap, BookOpen } from 'lucide-react';
 
 export default function WorkstationPage() {
     const [selectedMode, setSelectedMode] = useState<keyof typeof MODES_CONFIG>('Sales');
@@ -143,6 +143,14 @@ export default function WorkstationPage() {
 
                 {/* Navigation */}
                 <nav className="p-4 border-t" style={{ borderColor: 'var(--border-primary)' }}>
+                    <Link href="/workstation/notebooks" 
+                        className="flex items-center gap-3 px-4 py-3 mb-1 rounded-lg font-display text-sm font-medium transition-all hover:bg-[var(--surface-hover)]"
+                        style={{ color: 'var(--text-secondary)', textDecoration: 'none' }}>
+                        <BookOpen className="w-5 h-5" />
+                        <span>Notebooks</span>
+                        <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded" style={{ background: 'var(--accent-muted)', color: 'var(--accent-primary)' }}>NEW</span>
+                    </Link>
+
                     <Link href="/workstation/workflows" 
                         className="flex items-center gap-3 px-4 py-3 mb-1 rounded-lg font-display text-sm font-medium transition-all hover:bg-[var(--surface-hover)]"
                         style={{ color: 'var(--text-secondary)', textDecoration: 'none' }}>
