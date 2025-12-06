@@ -3,8 +3,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { 
-    Play, Plus, Save, Download, Share2, Settings, 
-    Loader2, Clock, CheckCircle, AlertTriangle, RotateCcw
+    Play, Plus, Loader2, Clock, CheckCircle, AlertTriangle, 
+    RotateCcw, Pause, Square, RefreshCw
 } from 'lucide-react';
 import { NotebookCell } from './NotebookCell';
 import { 
@@ -21,11 +21,13 @@ export function NotebookEditor({ notebookId }: NotebookEditorProps) {
     const [cells, setCells] = useState<CellType[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isRunning, setIsRunning] = useState(false);
+    const [isPaused, setIsPaused] = useState(false);
     const [runStatus, setRunStatus] = useState<{
         status: string;
         cellsCompleted: number;
         cellsFailed: number;
         currentCell?: string;
+        pausedAt?: string;
     } | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -38,6 +40,12 @@ export function NotebookEditor({ notebookId }: NotebookEditorProps) {
             const data = await response.json();
             setNotebook(data.notebook);
             setCells(data.notebook.cells || []);
+
+            // Check if notebook is paused
+            if (data.notebook.status === 'paused') {
+                setIsPaused(true);
+                setRunStatus(prev => prev ? { ...prev, status: 'paused' } : { status: 'paused', cellsCompleted: 0, cellsFailed: 0 });
+            }
         } catch (err: any) {
             setError(err.message);
         } finally {
@@ -140,6 +148,7 @@ export function NotebookEditor({ notebookId }: NotebookEditorProps) {
     // Run entire notebook
     const runNotebook = async () => {
         setIsRunning(true);
+        setIsPaused(false);
         setRunStatus({ status: 'running', cellsCompleted: 0, cellsFailed: 0 });
 
         // Reset all cell statuses
@@ -158,7 +167,12 @@ export function NotebookEditor({ notebookId }: NotebookEditorProps) {
                 status: data.status,
                 cellsCompleted: data.cellsCompleted || 0,
                 cellsFailed: data.cellsFailed || 0,
+                pausedAt: data.pausedAt,
             });
+
+            if (data.status === 'paused') {
+                setIsPaused(true);
+            }
 
             // Refresh notebook to get updated cell outputs
             await fetchNotebook();
@@ -205,15 +219,109 @@ export function NotebookEditor({ notebookId }: NotebookEditorProps) {
         }
     };
 
+    // Approve cell and continue
+    const approveCell = async (cellId: string) => {
+        try {
+            const response = await fetch(`/api/notebooks/${notebookId}/approve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cellId, action: 'approve' }),
+            });
+
+            const data = await response.json();
+
+            if (data.continueFrom) {
+                // Continue execution from next cell
+                setIsRunning(true);
+                setIsPaused(false);
+
+                const continueResponse = await fetch(`/api/notebooks/${notebookId}/run`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ runFromCell: data.continueFrom, includeApproved: true }),
+                });
+
+                const continueData = await continueResponse.json();
+
+                setRunStatus({
+                    status: continueData.status,
+                    cellsCompleted: continueData.cellsCompleted || 0,
+                    cellsFailed: continueData.cellsFailed || 0,
+                    pausedAt: continueData.pausedAt,
+                });
+
+                if (continueData.status === 'paused') {
+                    setIsPaused(true);
+                }
+
+                setIsRunning(false);
+            }
+
+            await fetchNotebook();
+
+        } catch (err: any) {
+            console.error('Failed to approve cell:', err);
+            setError(err.message);
+        }
+    };
+
+    // Reject cell
+    const rejectCell = async (cellId: string) => {
+        try {
+            await fetch(`/api/notebooks/${notebookId}/approve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cellId, action: 'reject' }),
+            });
+
+            setIsPaused(false);
+            setRunStatus(prev => prev ? { ...prev, status: 'failed' } : null);
+
+            await fetchNotebook();
+
+        } catch (err: any) {
+            console.error('Failed to reject cell:', err);
+            setError(err.message);
+        }
+    };
+
+    // Cancel running notebook
+    const cancelNotebook = async () => {
+        // For now, just refresh and stop local running state
+        setIsRunning(false);
+        setIsPaused(false);
+        setRunStatus(prev => prev ? { ...prev, status: 'cancelled' } : null);
+        await fetchNotebook();
+    };
+
     // Reset all cells
-    const resetCells = () => {
+    const resetCells = async () => {
+        // Reset local state
         setCells(prev => prev.map(c => ({
             ...c,
             status: 'idle' as const,
             output: null,
             error_message: undefined,
+            reasoning: undefined,
+            execution_log: undefined,
         })));
         setRunStatus(null);
+        setIsPaused(false);
+
+        // Reset in database
+        for (const cell of cells) {
+            await fetch(`/api/notebooks/${notebookId}/cells/${cell.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    status: 'idle',
+                    output: null,
+                    error_message: null,
+                    reasoning: null,
+                    execution_log: null,
+                }),
+            });
+        }
     };
 
     if (isLoading) {
@@ -229,6 +337,12 @@ export function NotebookEditor({ notebookId }: NotebookEditorProps) {
             <div className="p-4 bg-red-50 text-red-700 rounded-lg">
                 <AlertTriangle className="w-5 h-5 inline mr-2" />
                 {error}
+                <button 
+                    onClick={() => { setError(null); fetchNotebook(); }}
+                    className="ml-4 underline"
+                >
+                    Retry
+                </button>
             </div>
         );
     }
@@ -262,12 +376,16 @@ export function NotebookEditor({ notebookId }: NotebookEditorProps) {
                         ${runStatus.status === 'running' ? 'bg-yellow-100 text-yellow-700' : ''}
                         ${runStatus.status === 'error' || runStatus.status === 'failed' ? 'bg-red-100 text-red-700' : ''}
                         ${runStatus.status === 'paused' ? 'bg-orange-100 text-orange-700' : ''}
+                        ${runStatus.status === 'cancelled' ? 'bg-gray-100 text-gray-700' : ''}
                     `}>
                         {runStatus.status === 'completed' && <CheckCircle className="w-4 h-4" />}
                         {runStatus.status === 'running' && <Loader2 className="w-4 h-4 animate-spin" />}
-                        {runStatus.status === 'paused' && <Clock className="w-4 h-4" />}
+                        {runStatus.status === 'paused' && <Pause className="w-4 h-4" />}
+                        {(runStatus.status === 'error' || runStatus.status === 'failed') && <AlertTriangle className="w-4 h-4" />}
                         <span>
-                            {runStatus.cellsCompleted}/{cells.length} completed
+                            {runStatus.status === 'paused' ? 'Awaiting approval' : 
+                             runStatus.status === 'cancelled' ? 'Cancelled' :
+                             `${runStatus.cellsCompleted}/${cells.length} completed`}
                             {runStatus.cellsFailed > 0 && ` • ${runStatus.cellsFailed} failed`}
                         </span>
                     </div>
@@ -277,25 +395,55 @@ export function NotebookEditor({ notebookId }: NotebookEditorProps) {
                 <div className="flex items-center gap-2">
                     <button
                         onClick={resetCells}
-                        className="px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg flex items-center gap-2"
+                        disabled={isRunning}
+                        className="px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg flex items-center gap-2 disabled:opacity-50"
+                        title="Reset all cells"
                     >
                         <RotateCcw className="w-4 h-4" />
                         Reset
                     </button>
+
                     <button
-                        onClick={runNotebook}
-                        disabled={isRunning || cells.length === 0}
-                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                        onClick={fetchNotebook}
+                        className="px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg flex items-center gap-2"
+                        title="Refresh"
                     >
-                        {isRunning ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                            <Play className="w-4 h-4" />
-                        )}
-                        Run All
+                        <RefreshCw className="w-4 h-4" />
                     </button>
+
+                    {isRunning ? (
+                        <button
+                            onClick={cancelNotebook}
+                            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2"
+                        >
+                            <Square className="w-4 h-4" />
+                            Cancel
+                        </button>
+                    ) : (
+                        <button
+                            onClick={runNotebook}
+                            disabled={cells.length === 0}
+                            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                        >
+                            <Play className="w-4 h-4" />
+                            Run All
+                        </button>
+                    )}
                 </div>
             </div>
+
+            {/* Paused Banner */}
+            {isPaused && (
+                <div className="px-4 py-3 bg-orange-50 border-b border-orange-200 flex items-center gap-3">
+                    <Pause className="w-5 h-5 text-orange-600" />
+                    <span className="text-orange-800 font-medium">
+                        Notebook paused - Human approval required
+                    </span>
+                    <span className="text-orange-600 text-sm">
+                        Review the outputs below and approve or reject to continue
+                    </span>
+                </div>
+            )}
 
             {/* Cells */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
@@ -308,6 +456,8 @@ export function NotebookEditor({ notebookId }: NotebookEditorProps) {
                             onDelete={deleteCell}
                             onRunCell={runCell}
                             onAddDependency={toggleDependency}
+                            onApprove={approveCell}
+                            onReject={rejectCell}
                             availableCells={cells.map(c => ({
                                 id: c.id,
                                 title: c.title || `Cell ${c.cell_index + 1}`,
@@ -331,7 +481,7 @@ export function NotebookEditor({ notebookId }: NotebookEditorProps) {
                 {cells.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-12 text-gray-500">
                         <p className="mb-4">No cells yet. Add your first cell to get started.</p>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2 justify-center">
                             {Object.entries(CELL_TYPE_CONFIG).map(([type, config]) => (
                                 <button
                                     key={type}

@@ -4,9 +4,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { query } from '@/lib/db';
-import { streamText, generateText } from 'ai';
+import { generateText } from 'ai';
 import { groq } from '@ai-sdk/groq';
-import { openai } from '@ai-sdk/openai';
+import { reviewOutput, CriticReview } from '@/lib/agents/critic';
 
 interface Cell {
     id: string;
@@ -282,7 +282,7 @@ async function checkDependencies(cell: Cell, context: ExecutionContext, allCells
     return true;
 }
 
-// Execute a single cell
+// Execute a single cell with Critic Agent review
 async function executeCell(cell: Cell, context: ExecutionContext): Promise<{
     output: any;
     outputType: string;
@@ -290,6 +290,7 @@ async function executeCell(cell: Cell, context: ExecutionContext): Promise<{
     tokens: number;
     cost: number;
     toolsUsed: string[];
+    criticReview?: CriticReview;
 }> {
     const startTime = Date.now();
 
@@ -323,8 +324,6 @@ async function executeCell(cell: Cell, context: ExecutionContext): Promise<{
         prompt: enhancedContent,
     });
 
-    const durationMs = Date.now() - startTime;
-
     // Parse output based on cell type
     let output: any = response.text;
     let outputType = 'text';
@@ -346,17 +345,57 @@ async function executeCell(cell: Cell, context: ExecutionContext): Promise<{
         }
     }
 
+    // 🔍 CRITIC AGENT REVIEW
+    let criticReview: CriticReview | undefined;
+    
+    // Skip critic for note cells
+    if (cell.cell_type !== 'note') {
+        try {
+            console.log(`[Critic] 🔍 Reviewing cell ${cell.id}...`);
+            criticReview = await reviewOutput({
+                cellType: cell.cell_type,
+                originalPrompt: enhancedContent,
+                output,
+                strictMode: cell.cell_type === 'visualize' || cell.cell_type === 'transform'
+            });
+
+            console.log(`[Critic] ${criticReview.approved ? '✅' : '⚠️'} Confidence: ${criticReview.confidence}%`);
+
+            // If critic provides a corrected output, use it
+            if (!criticReview.approved && criticReview.correctedOutput) {
+                console.log(`[Critic] 🔧 Using corrected output`);
+                output = criticReview.correctedOutput;
+            }
+
+        } catch (criticError) {
+            console.error('[Critic] Review failed:', criticError);
+            // Continue without critic review
+        }
+    }
+
+    const durationMs = Date.now() - startTime;
+
     // Estimate tokens (rough)
     const tokens = Math.ceil((enhancedContent.length + response.text.length) / 4);
     const cost = tokens * 0.000001; // Rough estimate
 
+    // Build reasoning with critic feedback
+    let reasoning = `Processed ${cell.cell_type} cell in ${durationMs}ms`;
+    if (criticReview) {
+        reasoning += ` | Critic: ${criticReview.approved ? 'Approved' : 'Flagged'} (${criticReview.confidence}% confidence)`;
+        if (criticReview.issues.length > 0) {
+            reasoning += ` | Issues: ${criticReview.issues.join(', ')}`;
+        }
+    }
+
     return {
         output,
         outputType,
-        reasoning: `Processed ${cell.cell_type} cell with ${enhancedContent.length} chars input`,
+        reasoning,
         tokens,
         cost,
-        toolsUsed: [] // TODO: Track actual tools used
+        toolsUsed: [],
+        criticReview
     };
 }
 
@@ -418,6 +457,21 @@ async function updateCellStatus(cellId: string, status: string, output?: any, er
 }
 
 async function updateCellResult(cellId: string, result: any) {
+    // Build execution log with critic review
+    const executionLog = [];
+    
+    if (result.criticReview) {
+        executionLog.push({
+            type: 'critic_review',
+            timestamp: new Date().toISOString(),
+            approved: result.criticReview.approved,
+            confidence: result.criticReview.confidence,
+            issues: result.criticReview.issues,
+            suggestions: result.criticReview.suggestions,
+            reasoning: result.criticReview.reasoning
+        });
+    }
+
     await query(
         `UPDATE notebook_cells SET 
             status = 'completed',
@@ -428,9 +482,10 @@ async function updateCellResult(cellId: string, result: any) {
             tokens_output = $4,
             cost = $5,
             tools_used = $6,
+            execution_log = $7,
             completed_at = NOW(),
             updated_at = NOW()
-         WHERE id = $7`,
+         WHERE id = $8`,
         [
             JSON.stringify(result.output),
             result.outputType,
@@ -438,6 +493,7 @@ async function updateCellResult(cellId: string, result: any) {
             result.tokens,
             result.cost,
             result.toolsUsed,
+            JSON.stringify(executionLog),
             cellId
         ]
     );

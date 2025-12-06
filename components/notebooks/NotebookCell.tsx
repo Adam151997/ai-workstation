@@ -4,9 +4,20 @@
 import { useState } from 'react';
 import { 
     Play, Pause, Trash2, GripVertical, ChevronDown, ChevronRight,
-    CheckCircle, XCircle, Clock, AlertCircle, Loader2, Edit2, Link2
+    CheckCircle, XCircle, Clock, AlertCircle, Loader2, Link2,
+    Eye, Shield, ThumbsUp, ThumbsDown, MessageSquare
 } from 'lucide-react';
 import { NotebookCell as CellType, CELL_TYPE_CONFIG, CELL_STATUS_CONFIG } from '@/config/notebooks';
+
+interface CriticReviewLog {
+    type: 'critic_review';
+    timestamp: string;
+    approved: boolean;
+    confidence: number;
+    issues: string[];
+    suggestions: string[];
+    reasoning: string;
+}
 
 interface NotebookCellProps {
     cell: CellType;
@@ -15,6 +26,8 @@ interface NotebookCellProps {
     onDelete: (cellId: string) => void;
     onRunCell: (cellId: string) => void;
     onAddDependency: (cellId: string, dependencyId: string) => void;
+    onApprove?: (cellId: string) => void;
+    onReject?: (cellId: string) => void;
     availableCells: Array<{ id: string; title: string; cell_index: number }>;
     dragHandleProps?: any;
 }
@@ -26,6 +39,8 @@ export function NotebookCell({
     onDelete,
     onRunCell,
     onAddDependency,
+    onApprove,
+    onReject,
     availableCells,
     dragHandleProps
 }: NotebookCellProps) {
@@ -33,9 +48,15 @@ export function NotebookCell({
     const [isEditing, setIsEditing] = useState(false);
     const [editContent, setEditContent] = useState(cell.content);
     const [showDependencies, setShowDependencies] = useState(false);
+    const [showGlassCockpit, setShowGlassCockpit] = useState(false);
 
     const cellConfig = CELL_TYPE_CONFIG[cell.cell_type];
     const statusConfig = CELL_STATUS_CONFIG[cell.status];
+
+    // Extract critic review from execution log
+    const criticReview = cell.execution_log?.find(
+        (log: any) => log.type === 'critic_review'
+    ) as CriticReviewLog | undefined;
 
     const handleSave = () => {
         onUpdate(cell.id, { content: editContent });
@@ -65,6 +86,7 @@ export function NotebookCell({
             ${cell.status === 'running' ? 'border-yellow-400 ring-2 ring-yellow-100' : ''}
             ${cell.status === 'completed' ? 'border-green-200' : ''}
             ${cell.status === 'error' ? 'border-red-200' : ''}
+            ${cell.status === 'paused' ? 'border-orange-300 ring-2 ring-orange-100' : ''}
         `}>
             {/* Cell Header */}
             <div className="flex items-center gap-2 p-3 border-b bg-gray-50 rounded-t-lg">
@@ -88,6 +110,20 @@ export function NotebookCell({
                         placeholder={`Cell ${cell.cell_index + 1}`}
                     />
                 </div>
+
+                {/* Critic Badge */}
+                {criticReview && (
+                    <div className={`
+                        flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium
+                        ${criticReview.approved 
+                            ? 'bg-green-100 text-green-700' 
+                            : 'bg-yellow-100 text-yellow-700'
+                        }
+                    `}>
+                        <Shield className="w-3 h-3" />
+                        <span>{criticReview.confidence}%</span>
+                    </div>
+                )}
 
                 {/* Status */}
                 <div className="flex items-center gap-2">
@@ -115,6 +151,15 @@ export function NotebookCell({
                     >
                         <Play className="w-4 h-4 text-green-600" />
                     </button>
+                    {(criticReview || cell.reasoning) && (
+                        <button
+                            onClick={() => setShowGlassCockpit(!showGlassCockpit)}
+                            className={`p-1.5 rounded hover:bg-gray-200 ${showGlassCockpit ? 'bg-blue-100' : ''}`}
+                            title="Glass Cockpit"
+                        >
+                            <Eye className="w-4 h-4 text-blue-500" />
+                        </button>
+                    )}
                     <button
                         onClick={() => setShowDependencies(!showDependencies)}
                         className="p-1.5 rounded hover:bg-gray-200"
@@ -140,6 +185,150 @@ export function NotebookCell({
                     </button>
                 </div>
             </div>
+
+            {/* Human-in-the-Loop Approval Banner */}
+            {cell.cell_type === 'approve' && cell.status === 'paused' && (
+                <div className="p-4 bg-orange-50 border-b border-orange-200">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center">
+                                <MessageSquare className="w-5 h-5 text-orange-600" />
+                            </div>
+                            <div>
+                                <p className="font-medium text-orange-900">Human Approval Required</p>
+                                <p className="text-sm text-orange-700">Review the previous outputs before continuing</p>
+                            </div>
+                        </div>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => onReject?.(cell.id)}
+                                className="px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 flex items-center gap-2"
+                            >
+                                <ThumbsDown className="w-4 h-4" />
+                                Reject
+                            </button>
+                            <button
+                                onClick={() => onApprove?.(cell.id)}
+                                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+                            >
+                                <ThumbsUp className="w-4 h-4" />
+                                Approve & Continue
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Glass Cockpit Panel */}
+            {showGlassCockpit && (criticReview || cell.reasoning) && (
+                <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-b">
+                    <div className="flex items-center gap-2 mb-3">
+                        <Eye className="w-4 h-4 text-blue-600" />
+                        <span className="font-medium text-blue-900">Glass Cockpit</span>
+                        <span className="text-xs text-blue-600">Agent Transparency</span>
+                    </div>
+
+                    {/* Critic Review */}
+                    {criticReview && (
+                        <div className="mb-4">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Shield className="w-4 h-4 text-blue-600" />
+                                <span className="text-sm font-medium text-gray-700">Critic Agent Review</span>
+                                <span className={`
+                                    px-2 py-0.5 rounded-full text-xs font-medium
+                                    ${criticReview.approved 
+                                        ? 'bg-green-100 text-green-700' 
+                                        : 'bg-yellow-100 text-yellow-700'
+                                    }
+                                `}>
+                                    {criticReview.approved ? '✓ Approved' : '⚠ Flagged'}
+                                </span>
+                            </div>
+                            
+                            {/* Confidence Meter */}
+                            <div className="mb-3">
+                                <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                                    <span>Confidence</span>
+                                    <span>{criticReview.confidence}%</span>
+                                </div>
+                                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                                    <div 
+                                        className={`h-full transition-all ${
+                                            criticReview.confidence >= 80 ? 'bg-green-500' :
+                                            criticReview.confidence >= 60 ? 'bg-yellow-500' :
+                                            'bg-red-500'
+                                        }`}
+                                        style={{ width: `${criticReview.confidence}%` }}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Issues */}
+                            {criticReview.issues.length > 0 && (
+                                <div className="mb-2">
+                                    <p className="text-xs font-medium text-gray-600 mb-1">Issues Found:</p>
+                                    <ul className="text-xs text-red-600 space-y-1">
+                                        {criticReview.issues.map((issue, i) => (
+                                            <li key={i} className="flex items-start gap-1">
+                                                <span>•</span>
+                                                <span>{issue}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+
+                            {/* Suggestions */}
+                            {criticReview.suggestions.length > 0 && (
+                                <div className="mb-2">
+                                    <p className="text-xs font-medium text-gray-600 mb-1">Suggestions:</p>
+                                    <ul className="text-xs text-blue-600 space-y-1">
+                                        {criticReview.suggestions.map((suggestion, i) => (
+                                            <li key={i} className="flex items-start gap-1">
+                                                <span>💡</span>
+                                                <span>{suggestion}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+
+                            {/* Reasoning */}
+                            <div className="text-xs text-gray-500 italic">
+                                {criticReview.reasoning}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Agent Reasoning */}
+                    {cell.reasoning && (
+                        <div className="p-2 bg-white/50 rounded text-xs text-gray-600">
+                            <span className="font-medium">Agent: </span>
+                            {cell.reasoning}
+                        </div>
+                    )}
+
+                    {/* Tools Used */}
+                    {cell.tools_used && cell.tools_used.length > 0 && (
+                        <div className="mt-2 flex items-center gap-2">
+                            <span className="text-xs text-gray-500">Tools:</span>
+                            {cell.tools_used.map((tool, i) => (
+                                <span key={i} className="px-2 py-0.5 bg-white rounded text-xs text-gray-600">
+                                    {tool}
+                                </span>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Cost & Tokens */}
+                    {(cell.tokens_input || cell.cost) && (
+                        <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
+                            {cell.tokens_input && <span>Tokens: {cell.tokens_input}</span>}
+                            {cell.cost && <span>Cost: ${cell.cost.toFixed(6)}</span>}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Dependencies Panel */}
             {showDependencies && (
@@ -226,8 +415,19 @@ export function NotebookCell({
                                         {cell.output_type}
                                     </span>
                                 )}
+                                {criticReview && !criticReview.approved && (
+                                    <span className="px-1.5 py-0.5 bg-yellow-100 rounded text-yellow-700 text-[10px]">
+                                        ⚠ Review suggested
+                                    </span>
+                                )}
                             </p>
-                            <div className="p-3 bg-green-50 rounded-lg border border-green-200">
+                            <div className={`
+                                p-3 rounded-lg border
+                                ${criticReview && !criticReview.approved 
+                                    ? 'bg-yellow-50 border-yellow-200' 
+                                    : 'bg-green-50 border-green-200'
+                                }
+                            `}>
                                 {typeof cell.output === 'string' ? (
                                     <p className="text-gray-800 whitespace-pre-wrap">{cell.output}</p>
                                 ) : (
@@ -248,18 +448,6 @@ export function NotebookCell({
                                     <p className="text-red-700 text-sm">{cell.error_message}</p>
                                 </div>
                             </div>
-                        </div>
-                    )}
-
-                    {/* Reasoning (Glass Cockpit) */}
-                    {cell.reasoning && (
-                        <div className="mt-3 text-xs text-gray-500">
-                            <details>
-                                <summary className="cursor-pointer hover:text-gray-700">
-                                    View reasoning
-                                </summary>
-                                <p className="mt-1 p-2 bg-gray-50 rounded">{cell.reasoning}</p>
-                            </details>
                         </div>
                     )}
                 </div>
