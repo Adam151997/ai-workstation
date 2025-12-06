@@ -3,6 +3,7 @@
 // Uses Composio MCP for OAuth and API calls
 
 import { ComposioMCPClient } from '@/lib/composio-mcp-dynamic';
+import { type Mode } from '@/config/modes';
 import { query } from '@/lib/db';
 
 // =============================================================================
@@ -49,7 +50,8 @@ export abstract class BaseConnector {
         this.config = connectorConfig.config;
         
         // Initialize MCP client with user's tools
-        this.mcpClient = new ComposioMCPClient('General', this.userId, []);
+        // Using 'Admin' mode for ETL operations (data management)
+        this.mcpClient = new ComposioMCPClient('Admin' as Mode, this.userId, []);
     }
 
     abstract discover(): Promise<DiscoveredItem[]>;
