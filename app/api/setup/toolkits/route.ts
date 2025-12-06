@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
             ['JIRA', 'Jira', 'jira', 'Project tracking for software teams', 'productivity', 'https://cdn.worldvectorlogo.com/logos/jira-1.svg', 'oauth2', 30, false],
             ['ASANA', 'Asana', 'asana', 'Work management and team collaboration', 'productivity', 'https://cdn.worldvectorlogo.com/logos/asana-logo.svg', 'oauth2', 25, false],
             ['TRELLO', 'Trello', 'trello', 'Visual project management with boards', 'productivity', 'https://cdn.worldvectorlogo.com/logos/trello.svg', 'oauth2', 18, false],
-            ['GOOGLE_CALENDAR', 'Google Calendar', 'google-calendar', 'Calendar and scheduling service', 'productivity', 'https://cdn.worldvectorlogo.com/logos/google-calendar-1.svg', 'oauth2', 12, true],
+            ['GOOGLE_CALENDAR', 'Google Calendar', 'google-calendar', 'Calendar and scheduling service', 'productivity', 'https://ssl.gstatic.com/calendar/images/dynamiclogo_2020q4/calendar_31_2x.png', 'oauth2', 12, true],
             ['LINKEDIN', 'LinkedIn', 'linkedin', 'Professional networking platform', 'social', 'https://cdn.worldvectorlogo.com/logos/linkedin-icon-2.svg', 'oauth2', 15, false],
             ['TWITTER', 'Twitter/X', 'twitter', 'Social media platform', 'social', 'https://cdn.worldvectorlogo.com/logos/twitter-6.svg', 'oauth2', 18, false],
             ['STRIPE', 'Stripe', 'stripe', 'Payment processing platform', 'finance', 'https://cdn.worldvectorlogo.com/logos/stripe-4.svg', 'api_key', 22, true],
