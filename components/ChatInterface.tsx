@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { AI_MODELS, DEFAULT_MODEL, getModelsByProvider, getModelInfo, PROVIDER_INFO, type AIProvider } from '@/config/ai-models';
 import { Info, Zap, DollarSign, Layers } from 'lucide-react';
 import ChatUploadButton from './chat/ChatUploadButton';
+import { AgentModeToggle } from './chat/AgentModeToggle';
+import { AgentIndicator, AgentBadge, type AgentInfo, type RoutingInfo } from './chat/AgentIndicator';
 
 interface ChatInterfaceProps {
     selectedMode: string;
@@ -18,6 +20,9 @@ interface Message {
     id: string;
     role: 'user' | 'assistant';
     content: string;
+    agent?: AgentInfo;
+    routing?: RoutingInfo;
+    toolsUsed?: string[];
 }
 
 export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfaceProps) {
@@ -31,22 +36,33 @@ export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfac
     const [isLoading, setIsLoading] = useState(false);
     const [streamingMessage, setStreamingMessage] = useState('');
     const [showModelInfo, setShowModelInfo] = useState(false);
+    const [agentMode, setAgentMode] = useState(false);
+    const [currentAgent, setCurrentAgent] = useState<AgentInfo | null>(null);
+    const [conversationId] = useState(`conv-${Date.now()}`);
 
-    // Load saved model from localStorage on mount
+    // Load saved preferences from localStorage
     useEffect(() => {
         const savedModel = localStorage.getItem('selected-ai-model');
         if (savedModel && AI_MODELS.find(m => m.id === savedModel)) {
             setSelectedModel(savedModel);
         }
+        
+        const savedAgentMode = localStorage.getItem('agent-mode-enabled');
+        if (savedAgentMode === 'true') {
+            setAgentMode(true);
+        }
     }, []);
 
-    // Save model selection to localStorage
     const handleModelChange = (modelId: string) => {
         setSelectedModel(modelId);
         localStorage.setItem('selected-ai-model', modelId);
-        // Show brief success feedback
         setShowModelInfo(true);
         setTimeout(() => setShowModelInfo(false), 3000);
+    };
+
+    const handleAgentModeToggle = (enabled: boolean) => {
+        setAgentMode(enabled);
+        localStorage.setItem('agent-mode-enabled', String(enabled));
     };
 
     const handleSendMessage = async (e: React.FormEvent) => {
@@ -57,6 +73,7 @@ export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfac
         setInputValue('');
         setIsLoading(true);
         setStreamingMessage('');
+        setCurrentAgent(null);
 
         // Add user message
         const userMessage: Message = {
@@ -67,7 +84,7 @@ export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfac
         setMessages(prev => [...prev, userMessage]);
 
         try {
-            // Build messages array for API (exclude system intro)
+            // Build messages array for API
             const conversationMessages = messages
                 .filter(m => m.id !== 'system-intro')
                 .map(m => ({
@@ -75,20 +92,20 @@ export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfac
                     content: m.content
                 }));
             
-            // Add current user message
             conversationMessages.push({
                 role: 'user',
                 content: message
             });
 
-            // Manual fetch and stream reading with FULL conversation context
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    messages: conversationMessages, // Send entire conversation history
+                    messages: conversationMessages,
                     selectedMode,
                     selectedModel,
+                    useAgentMode: agentMode,
+                    conversationId,
                 }),
             });
 
@@ -96,29 +113,43 @@ export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfac
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
-            // Check if this is an artifact response
             const contentType = response.headers.get('content-type');
+            
+            // Handle JSON responses (artifacts and agent mode)
             if (contentType?.includes('application/json')) {
                 const jsonResponse = await response.json();
                 
+                // Artifact response
                 if (jsonResponse.type === 'artifact') {
-                    console.log('[ChatInterface] 🎨 Artifact response detected:', jsonResponse.artifactType);
-                    
-                    // Trigger artifact generation in parent component
+                    console.log('[ChatInterface] 🎨 Artifact response:', jsonResponse.artifactType);
                     onGenerateArtifact(message);
-                    
-                    // Add a message indicating artifact is being generated
                     setMessages(prev => [...prev, {
                         id: `assistant-${Date.now()}`,
                         role: 'assistant',
                         content: `✨ Generating ${jsonResponse.artifactType} artifact for you...`,
                     }]);
-                    
+                    setIsLoading(false);
+                    return;
+                }
+                
+                // Agent response
+                if (jsonResponse.type === 'agent') {
+                    console.log('[ChatInterface] 🤖 Agent response:', jsonResponse.agent?.name);
+                    setCurrentAgent(null);
+                    setMessages(prev => [...prev, {
+                        id: `assistant-${Date.now()}`,
+                        role: 'assistant',
+                        content: jsonResponse.content,
+                        agent: jsonResponse.agent,
+                        routing: jsonResponse.routing,
+                        toolsUsed: jsonResponse.toolsUsed,
+                    }]);
                     setIsLoading(false);
                     return;
                 }
             }
 
+            // Handle streaming response (standard mode)
             const reader = response.body?.getReader();
             const decoder = new TextDecoder();
             let fullText = '';
@@ -134,7 +165,6 @@ export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfac
                 }
             }
 
-            // Add assistant message
             setMessages(prev => [...prev, {
                 id: `assistant-${Date.now()}`,
                 role: 'assistant',
@@ -146,7 +176,6 @@ export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfac
             console.error('Chat error:', error);
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             
-            // Show error in chat
             setMessages(prev => [...prev, {
                 id: `error-${Date.now()}`,
                 role: 'assistant',
@@ -154,6 +183,7 @@ export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfac
             }]);
         } finally {
             setIsLoading(false);
+            setCurrentAgent(null);
         }
     };
 
@@ -162,44 +192,58 @@ export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfac
 
     return (
         <div className="flex flex-col h-full bg-gray-50 p-4 border-r">
-            {/* Model Selector */}
-            <div className="mb-4 pb-4 border-b border-gray-200">
-                <label className="block text-xs font-medium text-gray-700 mb-2">
-                    AI Model
-                </label>
-                <Select value={selectedModel} onValueChange={handleModelChange}>
-                    <SelectTrigger className="w-full bg-white">
-                        <SelectValue placeholder="Select a model" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {Object.entries(modelsByProvider).map(([provider, models]) => (
-                            <div key={provider}>
-                                <div className="px-2 py-1.5 text-xs font-semibold text-gray-500 bg-gray-50">
-                                    {PROVIDER_INFO[provider as AIProvider].name}
-                                </div>
-                                {models.map((model) => (
-                                    <SelectItem key={model.id} value={model.id}>
-                                        <div className="flex flex-col py-1">
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-medium">{model.name}</span>
-                                                {model.recommended && (
-                                                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
-                                                        Recommended
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <span className="text-xs text-gray-500">{model.description}</span>
-                                        </div>
-                                    </SelectItem>
-                                ))}
-                            </div>
-                        ))}
-                    </SelectContent>
-                </Select>
+            {/* Header Controls */}
+            <div className="mb-4 pb-4 border-b border-gray-200 space-y-3">
+                {/* Agent Mode Toggle */}
+                <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-gray-700">
+                        Chat Mode
+                    </label>
+                    <AgentModeToggle 
+                        enabled={agentMode} 
+                        onToggle={handleAgentModeToggle} 
+                    />
+                </div>
 
-                {/* Model Info Panel */}
+                {/* Model Selector */}
+                <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-2">
+                        AI Model {agentMode && <span className="text-purple-600">(routing uses GPT-4o-mini)</span>}
+                    </label>
+                    <Select value={selectedModel} onValueChange={handleModelChange}>
+                        <SelectTrigger className="w-full bg-white">
+                            <SelectValue placeholder="Select a model" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {Object.entries(modelsByProvider).map(([provider, models]) => (
+                                <div key={provider}>
+                                    <div className="px-2 py-1.5 text-xs font-semibold text-gray-500 bg-gray-50">
+                                        {PROVIDER_INFO[provider as AIProvider].name}
+                                    </div>
+                                    {models.map((model) => (
+                                        <SelectItem key={model.id} value={model.id}>
+                                            <div className="flex flex-col py-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-medium">{model.name}</span>
+                                                    {model.recommended && (
+                                                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                                                            Recommended
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <span className="text-xs text-gray-500">{model.description}</span>
+                                            </div>
+                                        </SelectItem>
+                                    ))}
+                                </div>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                {/* Model Info */}
                 {showModelInfo && currentModel && (
-                    <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs space-y-2 animate-in fade-in duration-200">
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs animate-in fade-in duration-200">
                         <div className="font-semibold text-blue-900 flex items-center gap-2">
                             <Info className="w-3 h-3" />
                             Model switched to {currentModel.name}
@@ -207,9 +251,8 @@ export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfac
                     </div>
                 )}
 
-                {/* Current Model Quick Info */}
                 {currentModel && !showModelInfo && (
-                    <div className="mt-2 p-2 bg-white border rounded text-xs space-y-1.5">
+                    <div className="p-2 bg-white border rounded text-xs space-y-1.5">
                         <div className="flex items-center justify-between text-gray-600">
                             <div className="flex items-center gap-1.5">
                                 <Layers className="w-3 h-3" />
@@ -233,29 +276,64 @@ export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfac
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto space-y-4 pb-4">
                 {messages.map((m) => (
-                    <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div key={m.id} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+                        {/* Agent badge for agent responses */}
+                        {m.role === 'assistant' && m.agent && (
+                            <div className="mb-1">
+                                <AgentIndicator 
+                                    agent={m.agent} 
+                                    routing={m.routing}
+                                    toolsUsed={m.toolsUsed}
+                                />
+                            </div>
+                        )}
                         <div className={`max-w-[80%] p-3 rounded-lg text-sm whitespace-pre-wrap ${m.role === 'user'
                             ? 'bg-blue-600 text-white shadow-md'
                             : 'bg-white text-gray-800 border shadow-sm'
-                            }`}>
+                            }`}
+                            style={m.agent ? { borderLeftColor: m.agent.color, borderLeftWidth: '3px' } : undefined}
+                        >
                             {m.content}
                         </div>
                     </div>
                 ))}
+                
+                {/* Streaming message */}
                 {streamingMessage && (
-                    <div className="flex justify-start">
+                    <div className="flex flex-col items-start">
                         <div className="max-w-[80%] p-3 rounded-lg text-sm whitespace-pre-wrap bg-white text-gray-800 border shadow-sm">
                             {streamingMessage}
                             <span className="inline-block w-2 h-4 ml-1 bg-blue-600 animate-pulse"></span>
                         </div>
                     </div>
                 )}
+                
+                {/* Loading indicator */}
                 {isLoading && !streamingMessage && (
                     <div className="flex justify-start">
-                        <div className="bg-gray-100 text-gray-500 text-xs px-3 py-1 rounded-full animate-pulse flex items-center gap-2">
-                            <Zap className="w-3 h-3" />
-                            {currentModel?.name} is thinking...
+                        <div className="bg-gray-100 text-gray-500 text-xs px-3 py-2 rounded-lg animate-pulse flex items-center gap-2">
+                            {agentMode ? (
+                                <>
+                                    <span className="text-lg">🧭</span>
+                                    <span>Routing to specialist agent...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Zap className="w-3 h-3" />
+                                    <span>{currentModel?.name} is thinking...</span>
+                                </>
+                            )}
                         </div>
+                    </div>
+                )}
+                
+                {/* Current agent processing indicator */}
+                {isLoading && currentAgent && (
+                    <div className="flex justify-start">
+                        <AgentIndicator 
+                            agent={currentAgent} 
+                            isProcessing={true}
+                        />
                     </div>
                 )}
             </div>
@@ -270,7 +348,10 @@ export function ChatInterface({ selectedMode, onGenerateArtifact }: ChatInterfac
                 />
                 <Input
                     className="flex-1 bg-white"
-                    placeholder={`Chat in ${selectedMode} Mode...`}
+                    placeholder={agentMode 
+                        ? `Ask anything - agent will route automatically...` 
+                        : `Chat in ${selectedMode} Mode...`
+                    }
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     disabled={isLoading}

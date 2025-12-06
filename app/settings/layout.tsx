@@ -15,7 +15,8 @@ import {
     Zap,
     BarChart3,
     CreditCard,
-    Store
+    Store,
+    Users
 } from 'lucide-react';
 
 const settingsNav = [
@@ -24,6 +25,12 @@ const settingsNav = [
         href: '/settings/toolkit-store',
         icon: Store,
         description: 'Install app integrations',
+    },
+    {
+        name: 'Agents',
+        href: '/settings/agents',
+        icon: Users,
+        description: 'Multi-agent configuration',
     },
     {
         name: 'Observability',
