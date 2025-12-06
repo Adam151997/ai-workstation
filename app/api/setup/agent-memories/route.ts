@@ -9,7 +9,7 @@ export async function GET() {
     try {
         console.log('[Setup] Running agent memories migration...');
 
-        // Create agent_memories table
+        // Create agent_memories table (no foreign key - uses Clerk user IDs)
         await query(`
             CREATE TABLE IF NOT EXISTS agent_memories (
                 id TEXT PRIMARY KEY,
@@ -21,9 +21,7 @@ export async function GET() {
                 metadata JSONB DEFAULT '{}',
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                expires_at TIMESTAMP WITH TIME ZONE,
-                
-                CONSTRAINT fk_agent_memories_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                expires_at TIMESTAMP WITH TIME ZONE
             );
         `);
         console.log('[Setup] ✅ Created agent_memories table');

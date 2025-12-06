@@ -1,7 +1,7 @@
 -- Migration: 009_agent_memories.sql
 -- Cross-context memory storage for agent system
 
--- Agent memories table
+-- Agent memories table (no foreign key - uses Clerk user IDs)
 CREATE TABLE IF NOT EXISTS agent_memories (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -10,12 +10,9 @@ CREATE TABLE IF NOT EXISTS agent_memories (
     source TEXT NOT NULL, -- agent role that created this memory
     relevance DECIMAL(3,2) DEFAULT 0.5 CHECK (relevance >= 0 AND relevance <= 1),
     metadata JSONB DEFAULT '{}',
-    embedding VECTOR(1536), -- for future semantic search
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    expires_at TIMESTAMP WITH TIME ZONE, -- optional expiration
-    
-    CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    expires_at TIMESTAMP WITH TIME ZONE -- optional expiration
 );
 
 -- Indexes for efficient querying
@@ -72,4 +69,3 @@ COMMENT ON TABLE agent_memories IS 'Cross-context memory storage for AI agents';
 COMMENT ON COLUMN agent_memories.type IS 'Memory type: fact, preference, context, decision, outcome';
 COMMENT ON COLUMN agent_memories.source IS 'Agent role that created this memory';
 COMMENT ON COLUMN agent_memories.relevance IS 'Relevance score 0-1, higher means more important';
-COMMENT ON COLUMN agent_memories.embedding IS 'Vector embedding for semantic search (future use)';
