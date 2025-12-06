@@ -41,14 +41,17 @@ export {
     processWithCrew,
 } from './crew';
 
-// Memory System
+// Memory System (Enhanced with Semantic Search)
 export {
     MemoryManager,
     getMemoryManager,
     storeMemory,
+    searchMemoriesSemantic,
     getRelevantMemories,
     buildMemoryContext,
     learnFromConversation,
+    consolidateMemories,
+    decayOldMemories,
     type StoredMemory,
     type MemorySearchOptions,
 } from './memory';

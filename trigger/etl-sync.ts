@@ -1,6 +1,6 @@
 // trigger/etl-sync.ts
 // Background job for ETL data synchronization
-// Handles bulk data ingestion from external sources
+// Uses actual connectors for bulk data ingestion
 
 import { task, wait } from "@trigger.dev/sdk/v3";
 
@@ -22,11 +22,11 @@ interface ETLSyncPayload {
 /**
  * Main ETL Sync Job
  * 
- * Syncs data from external sources:
- * - Discovers items in source
+ * Syncs data from external sources using actual connectors:
+ * - Discovers items in source via Composio MCP
  * - Detects changes (delta sync)
  * - Downloads new/modified items
- * - Processes and indexes documents
+ * - Creates documents and indexes them
  */
 export const etlSyncJob = task({
     id: "etl-sync",
@@ -54,101 +54,53 @@ export const etlSyncJob = task({
                 startedAt: new Date().toISOString(),
             });
 
-            // 2. Discover items in source
-            console.log(`[ETL Sync] 📂 Discovering items...`);
-            const items = await discoverItems(sourceType, config, metadata.userId);
-            
-            await updateSyncJob(baseUrl, syncJobId, {
-                itemsFound: items.length,
+            // 2. Call the actual sync API which uses real connectors
+            const syncResponse = await fetch(`${baseUrl}/api/data-sources/sync/run`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-internal-trigger': 'true',
+                },
+                body: JSON.stringify({
+                    syncJobId,
+                    dataSourceId,
+                    userId: metadata.userId,
+                    jobType,
+                }),
             });
 
-            console.log(`[ETL Sync] Found ${items.length} items`);
-
-            // 3. Filter for changes (if delta sync)
-            let itemsToProcess = items;
-            if (jobType === 'delta' || jobType === 'incremental') {
-                itemsToProcess = await filterChangedItems(baseUrl, dataSourceId, items);
-                console.log(`[ETL Sync] ${itemsToProcess.length} items need processing`);
+            if (!syncResponse.ok) {
+                throw new Error(`Sync API error: ${syncResponse.status}`);
             }
 
-            // 4. Process items in batches
-            const batchSize = 5;
-            let processed = 0;
-            let created = 0;
-            let updated = 0;
-            let skipped = 0;
-            let failed = 0;
-            let bytesProcessed = 0;
+            const result = await syncResponse.json();
 
-            for (let i = 0; i < itemsToProcess.length; i += batchSize) {
-                const batch = itemsToProcess.slice(i, i + batchSize);
-                
-                const results = await Promise.allSettled(
-                    batch.map(item => processItem(baseUrl, item, dataSourceId, metadata.userId))
-                );
-
-                for (let j = 0; j < results.length; j++) {
-                    const result = results[j];
-                    const item = batch[j];
-
-                    if (result.status === 'fulfilled') {
-                        processed++;
-                        bytesProcessed += item.fileSize || 0;
-                        
-                        if (result.value.action === 'created') created++;
-                        else if (result.value.action === 'updated') updated++;
-                        else if (result.value.action === 'skipped') skipped++;
-                    } else {
-                        failed++;
-                        console.error(`[ETL Sync] ❌ Failed: ${item.name}: ${result.reason?.message}`);
-                    }
-                }
-
-                // Update progress
-                await updateSyncJob(baseUrl, syncJobId, {
-                    itemsProcessed: processed,
-                    itemsCreated: created,
-                    itemsUpdated: updated,
-                    itemsSkipped: skipped,
-                    itemsFailed: failed,
-                    bytesProcessed,
-                });
-
-                // Small delay between batches
-                if (i + batchSize < itemsToProcess.length) {
-                    await wait.for({ seconds: 1 });
-                }
-            }
-
-            // 5. Complete job
-            const finalStatus = failed === 0 ? 'completed' : 
-                               failed === itemsToProcess.length ? 'failed' : 'completed';
-
+            // 3. Update job with results
             await updateSyncJob(baseUrl, syncJobId, {
-                status: finalStatus,
+                status: result.itemsFailed > 0 ? 'completed' : 'completed',
                 completedAt: new Date().toISOString(),
+                itemsFound: result.itemsFound,
+                itemsProcessed: result.itemsProcessed,
+                itemsCreated: result.itemsCreated,
+                itemsUpdated: result.itemsUpdated,
+                itemsSkipped: result.itemsSkipped,
+                itemsFailed: result.itemsFailed,
             });
 
-            // 6. Update data source
+            // 4. Update data source
             await updateDataSource(baseUrl, dataSourceId, {
                 connectionStatus: 'connected',
                 lastSyncAt: new Date().toISOString(),
-                lastSyncStatus: finalStatus === 'completed' ? 'success' : 'partial',
-                totalItemsSynced: processed,
+                lastSyncStatus: result.itemsFailed === 0 ? 'success' : 'partial',
+                totalItemsSynced: result.itemsProcessed,
             });
 
-            console.log(`[ETL Sync] 🏁 Completed: ${processed} processed, ${created} created, ${updated} updated, ${failed} failed`);
+            console.log(`[ETL Sync] 🏁 Completed: ${result.itemsProcessed} processed, ${result.itemsCreated} created, ${result.itemsFailed} failed`);
 
             return {
                 syncJobId,
-                status: finalStatus,
-                itemsFound: items.length,
-                itemsProcessed: processed,
-                itemsCreated: created,
-                itemsUpdated: updated,
-                itemsSkipped: skipped,
-                itemsFailed: failed,
-                bytesProcessed,
+                status: 'completed',
+                ...result,
             };
 
         } catch (error: any) {
@@ -172,87 +124,6 @@ export const etlSyncJob = task({
 });
 
 /**
- * Discover items in external source
- */
-async function discoverItems(
-    sourceType: string,
-    config: Record<string, any>,
-    userId: string
-): Promise<Array<{
-    externalId: string;
-    name: string;
-    path?: string;
-    mimeType?: string;
-    fileSize?: number;
-    modifiedAt?: string;
-    hash?: string;
-}>> {
-    // TODO: Implement actual source-specific discovery
-    // This would use Composio tools or direct API calls
-    
-    switch (sourceType) {
-        case 'google_drive':
-            // Use Composio GOOGLEDRIVE_LIST_FILES
-            return [];
-            
-        case 'gmail':
-            // Use Composio GMAIL_LIST_MESSAGES
-            return [];
-            
-        case 'notion':
-            // Use Composio NOTION_SEARCH
-            return [];
-            
-        case 'slack':
-            // Use Composio SLACK_LIST_CHANNELS + messages
-            return [];
-            
-        case 'dropbox':
-            // Use Composio DROPBOX_LIST_FOLDER
-            return [];
-            
-        case 'onedrive':
-            // Use Microsoft Graph API
-            return [];
-            
-        default:
-            return [];
-    }
-}
-
-/**
- * Filter items to only those that have changed
- */
-async function filterChangedItems(
-    baseUrl: string,
-    dataSourceId: string,
-    items: any[]
-): Promise<any[]> {
-    // TODO: Compare against sync_items table
-    // Return only items with different hash or modifiedAt
-    return items;
-}
-
-/**
- * Process a single item
- */
-async function processItem(
-    baseUrl: string,
-    item: any,
-    dataSourceId: string,
-    userId: string
-): Promise<{ action: 'created' | 'updated' | 'skipped' }> {
-    // TODO: Implement actual item processing
-    // 1. Download content
-    // 2. Extract text
-    // 3. Create/update document
-    // 4. Generate embeddings
-    // 5. Update sync_items record
-    
-    return { action: 'skipped' };
-}
-
-/**
  * Update sync job in database
  */
 async function updateSyncJob(
@@ -260,17 +131,21 @@ async function updateSyncJob(
     syncJobId: string,
     data: Record<string, any>
 ): Promise<void> {
-    await fetch(`${baseUrl}/api/data-sources/sync/update`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-internal-trigger': 'true',
-        },
-        body: JSON.stringify({
-            syncJobId,
-            ...data,
-        }),
-    });
+    try {
+        await fetch(`${baseUrl}/api/data-sources/sync/update`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-internal-trigger': 'true',
+            },
+            body: JSON.stringify({
+                syncJobId,
+                ...data,
+            }),
+        });
+    } catch (e) {
+        console.error('[ETL Sync] Failed to update sync job:', e);
+    }
 }
 
 /**
@@ -281,72 +156,68 @@ async function updateDataSource(
     dataSourceId: string,
     data: Record<string, any>
 ): Promise<void> {
-    await fetch(`${baseUrl}/api/data-sources/update`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-internal-trigger': 'true',
-        },
-        body: JSON.stringify({
-            dataSourceId,
-            ...data,
-        }),
-    });
+    try {
+        await fetch(`${baseUrl}/api/data-sources/update`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-internal-trigger': 'true',
+            },
+            body: JSON.stringify({
+                dataSourceId,
+                ...data,
+            }),
+        });
+    } catch (e) {
+        console.error('[ETL Sync] Failed to update data source:', e);
+    }
 }
 
 /**
- * Google Drive specific sync job
+ * Scheduled sync job - runs periodically
  */
-export const googleDriveSyncJob = task({
-    id: "google-drive-sync",
-    retry: { maxAttempts: 3 },
-    run: async (payload: {
-        syncJobId: string;
-        dataSourceId: string;
-        folderId?: string;
-        userId: string;
-    }) => {
-        // TODO: Implement Google Drive specific sync
-        // Uses Composio GOOGLEDRIVE_* tools
-        console.log('[Google Drive Sync] Not yet implemented');
-        return { status: 'skipped' };
-    },
-});
+export const scheduledSyncJob = task({
+    id: "scheduled-etl-sync",
+    retry: { maxAttempts: 2 },
+    run: async (payload: { userId: string }) => {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
-/**
- * Gmail sync job
- */
-export const gmailSyncJob = task({
-    id: "gmail-sync",
-    retry: { maxAttempts: 3 },
-    run: async (payload: {
-        syncJobId: string;
-        dataSourceId: string;
-        query?: string;
-        userId: string;
-    }) => {
-        // TODO: Implement Gmail specific sync
-        // Uses Composio GMAIL_* tools
-        console.log('[Gmail Sync] Not yet implemented');
-        return { status: 'skipped' };
-    },
-});
+        try {
+            // Get all active data sources with scheduled syncs due
+            const response = await fetch(`${baseUrl}/api/data-sources/scheduled?userId=${payload.userId}`, {
+                headers: { 'x-internal-trigger': 'true' },
+            });
 
-/**
- * Notion sync job
- */
-export const notionSyncJob = task({
-    id: "notion-sync",
-    retry: { maxAttempts: 3 },
-    run: async (payload: {
-        syncJobId: string;
-        dataSourceId: string;
-        workspaceId?: string;
-        userId: string;
-    }) => {
-        // TODO: Implement Notion specific sync
-        // Uses Composio NOTION_* tools
-        console.log('[Notion Sync] Not yet implemented');
-        return { status: 'skipped' };
+            if (!response.ok) return { syncsTriggered: 0 };
+
+            const data = await response.json();
+            const dueSyncs = data.scheduledSyncs || [];
+
+            console.log(`[Scheduled Sync] Found ${dueSyncs.length} scheduled syncs due`);
+
+            // Trigger each sync
+            for (const sync of dueSyncs) {
+                await fetch(`${baseUrl}/api/data-sources/sync`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-internal-trigger': 'true',
+                    },
+                    body: JSON.stringify({
+                        dataSourceId: sync.dataSourceId,
+                        jobType: 'incremental',
+                    }),
+                });
+
+                // Small delay between triggers
+                await wait.for({ seconds: 2 });
+            }
+
+            return { syncsTriggered: dueSyncs.length };
+
+        } catch (error: any) {
+            console.error('[Scheduled Sync] Error:', error.message);
+            return { syncsTriggered: 0, error: error.message };
+        }
     },
 });

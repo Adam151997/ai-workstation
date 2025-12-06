@@ -443,12 +443,13 @@ export default function DataSourcesPage() {
             )}
 
             {/* Info Box */}
-            <div className="bg-amber-50 rounded-lg border border-amber-200 p-6">
-                <h3 className="font-semibold text-amber-900 mb-2">⚠️ Coming Soon</h3>
-                <p className="text-sm text-amber-800">
-                    OAuth authentication for data sources is in development. Currently, 
-                    you can create data source configurations, but actual syncing requires 
-                    Composio integration to be completed.
+            <div className="bg-blue-50 rounded-lg border border-blue-200 p-6">
+                <h3 className="font-semibold text-blue-900 mb-2">ℹ️ Sync Requirements</h3>
+                <p className="text-sm text-blue-800">
+                    To sync data from external sources, you need to connect the corresponding 
+                    tools in the <strong>Toolkit Store</strong>. For example, install "Google Drive" 
+                    to sync files from Google Drive. The sync uses your authenticated connection 
+                    via Composio.
                 </p>
             </div>
         </div>
