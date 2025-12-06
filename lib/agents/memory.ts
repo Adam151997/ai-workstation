@@ -32,6 +32,18 @@ export interface MemorySearchOptions {
     useSemantic?: boolean; // Use embedding-based search
 }
 
+// Scored memory with similarity - all fields required
+export interface ScoredMemory {
+    id: string;
+    type: MemoryItem['type'];
+    content: string;
+    source: AgentRole;
+    relevance: number;
+    metadata: Record<string, any>;
+    timestamp: Date;
+    similarity: number;
+}
+
 // =============================================================================
 // Embedding Generation
 // =============================================================================
@@ -170,7 +182,7 @@ export class MemoryManager {
         queryText: string,
         limit: number = 10,
         minSimilarity: number = 0.5
-    ): Promise<Array<MemoryItem & { similarity: number }>> {
+    ): Promise<ScoredMemory[]> {
         try {
             // Generate query embedding
             const queryEmbedding = await generateEmbedding(queryText);
@@ -190,38 +202,40 @@ export class MemoryManager {
                 return [];
             }
 
-            // Calculate similarities
-            const scored = rows.map((row: any) => {
+            // Calculate similarities and filter
+            const scored: ScoredMemory[] = [];
+            
+            for (const row of rows) {
                 let embedding: number[] = [];
                 try {
                     embedding = typeof row.embedding === 'string' 
                         ? JSON.parse(row.embedding) 
                         : row.embedding;
                 } catch {
-                    return null;
+                    continue;
                 }
 
                 if (!embedding || embedding.length !== EMBEDDING_DIMENSION) {
-                    return null;
+                    continue;
                 }
 
                 const similarity = cosineSimilarity(queryEmbedding, embedding);
                 
-                return {
-                    id: row.id,
-                    type: row.type as MemoryItem['type'],
-                    content: row.content,
-                    source: row.source as AgentRole,
-                    relevance: parseFloat(row.relevance),
-                    metadata: typeof row.metadata === 'string' 
-                        ? JSON.parse(row.metadata) 
-                        : row.metadata,
-                    timestamp: new Date(row.timestamp),
-                    similarity,
-                };
-            }).filter((item): item is (MemoryItem & { similarity: number }) => 
-                item !== null && item.similarity >= minSimilarity
-            );
+                if (similarity >= minSimilarity) {
+                    scored.push({
+                        id: row.id,
+                        type: row.type as MemoryItem['type'],
+                        content: row.content,
+                        source: row.source as AgentRole,
+                        relevance: parseFloat(row.relevance) || 0.5,
+                        metadata: typeof row.metadata === 'string' 
+                            ? JSON.parse(row.metadata) 
+                            : (row.metadata || {}),
+                        timestamp: new Date(row.timestamp),
+                        similarity,
+                    });
+                }
+            }
 
             // Sort by similarity and return top results
             scored.sort((a, b) => b.similarity - a.similarity);
@@ -346,7 +360,7 @@ export class MemoryManager {
         }
 
         // Combine and deduplicate
-        const allResults = [...semanticResults, ...keywordResults];
+        const allResults: MemoryItem[] = [...semanticResults, ...keywordResults];
         const uniqueResults = this.deduplicateMemories(allResults);
         
         console.log(`[Memory] Hybrid search: ${semanticResults.length} semantic + ${keywordResults.length} keyword = ${uniqueResults.length} unique`);
@@ -747,7 +761,7 @@ export async function searchMemoriesSemantic(
     userId: string,
     queryText: string,
     limit: number = 10
-): Promise<Array<MemoryItem & { similarity: number }>> {
+): Promise<ScoredMemory[]> {
     const manager = getMemoryManager(userId);
     return manager.semanticSearch(queryText, limit);
 }

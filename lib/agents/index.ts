@@ -54,6 +54,7 @@ export {
     decayOldMemories,
     type StoredMemory,
     type MemorySearchOptions,
+    type ScoredMemory,
 } from './memory';
 
 // Specialist Agents
