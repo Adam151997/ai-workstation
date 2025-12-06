@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { 
     Search, Loader2, Plug, Check, ExternalLink, Settings2,
     ChevronDown, ChevronRight, Trash2, RefreshCw, Link2, Unlink,
-    ToggleLeft, ToggleRight, AlertCircle, Star
+    ToggleLeft, ToggleRight, AlertCircle, Star, Plus, Server, X
 } from 'lucide-react';
 
 interface InstalledToolkit {
@@ -43,6 +43,11 @@ export default function ToolsSettingsPage() {
     const [loadingActions, setLoadingActions] = useState<string | null>(null);
     const [connectingId, setConnectingId] = useState<string | null>(null);
     const [uninstallingId, setUninstallingId] = useState<string | null>(null);
+
+    // Custom MCP Modal State
+    const [showMcpModal, setShowMcpModal] = useState(false);
+    const [mcpForm, setMcpForm] = useState({ name: '', url: '', headers: '' });
+    const [addingMcp, setAddingMcp] = useState(false);
 
     // Fetch installed toolkits
     useEffect(() => {
@@ -174,6 +179,62 @@ export default function ToolsSettingsPage() {
         }
     };
 
+    // Add custom MCP server
+    const addCustomMcp = async () => {
+        if (!mcpForm.name.trim() || !mcpForm.url.trim()) {
+            alert('Please provide both name and URL');
+            return;
+        }
+
+        // Validate URL format
+        try {
+            new URL(mcpForm.url);
+        } catch {
+            alert('Please provide a valid URL');
+            return;
+        }
+
+        setAddingMcp(true);
+        try {
+            // Parse headers if provided
+            let customConfig: Record<string, any> = {};
+            if (mcpForm.headers.trim()) {
+                try {
+                    customConfig.headers = JSON.parse(mcpForm.headers);
+                } catch {
+                    alert('Headers must be valid JSON (e.g., {"Authorization": "Bearer xxx"})');
+                    setAddingMcp(false);
+                    return;
+                }
+            }
+
+            const response = await fetch('/api/toolkits', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    customMcpUrl: mcpForm.url,
+                    customName: mcpForm.name,
+                    customConfig,
+                }),
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                setShowMcpModal(false);
+                setMcpForm({ name: '', url: '', headers: '' });
+                await fetchToolkits();
+            } else {
+                alert(data.error || 'Failed to add MCP server');
+            }
+        } catch (error) {
+            console.error('Failed to add MCP:', error);
+            alert('Failed to add MCP server');
+        } finally {
+            setAddingMcp(false);
+        }
+    };
+
     const filteredToolkits = toolkits.filter(t => 
         (t.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
         (t.description || '').toLowerCase().includes(searchQuery.toLowerCase())
@@ -192,13 +253,23 @@ export default function ToolsSettingsPage() {
     return (
         <div>
             {/* Header */}
-            <div className="mb-8">
-                <h1 className="font-display text-2xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
-                    My Toolkits
-                </h1>
-                <p style={{ color: 'var(--text-secondary)' }}>
-                    Manage your installed integrations and configure available actions
-                </p>
+            <div className="flex items-start justify-between mb-8">
+                <div>
+                    <h1 className="font-display text-2xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
+                        My Toolkits
+                    </h1>
+                    <p style={{ color: 'var(--text-secondary)' }}>
+                        Manage your installed integrations and configure available actions
+                    </p>
+                </div>
+                <button
+                    onClick={() => setShowMcpModal(true)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg font-display text-sm font-medium transition-all hover:opacity-90"
+                    style={{ background: 'var(--accent-primary)', color: 'white' }}
+                >
+                    <Server className="w-4 h-4" />
+                    Add Custom MCP
+                </button>
             </div>
 
             {/* Stats */}
@@ -420,6 +491,244 @@ export default function ToolsSettingsPage() {
                             </div>
                         );
                     })}
+                </div>
+            )}
+
+            {/* Custom MCP Modal */}
+            {showMcpModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}>
+                    <div 
+                        className="w-full max-w-lg mx-4 rounded-xl border shadow-2xl"
+                        style={{ background: 'var(--surface-primary)', borderColor: 'var(--border-primary)' }}
+                    >
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between p-5 border-b" style={{ borderColor: 'var(--border-primary)' }}>
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'var(--accent-muted)' }}>
+                                    <Server className="w-5 h-5" style={{ color: 'var(--accent-primary)' }} />
+                                </div>
+                                <div>
+                                    <h2 className="font-display font-semibold" style={{ color: 'var(--text-primary)' }}>Add Custom MCP Server</h2>
+                                    <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>Connect your own Model Context Protocol server</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => { setShowMcpModal(false); setMcpForm({ name: '', url: '', headers: '' }); }}
+                                className="p-2 rounded-lg transition-all hover:bg-[var(--surface-hover)]"
+                            >
+                                <X className="w-5 h-5" style={{ color: 'var(--text-tertiary)' }} />
+                            </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="p-5 space-y-4">
+                            {/* Name Field */}
+                            <div>
+                                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+                                    Name <span style={{ color: 'var(--error)' }}>*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={mcpForm.name}
+                                    onChange={(e) => setMcpForm(prev => ({ ...prev, name: e.target.value }))}
+                                    placeholder="My Custom Server"
+                                    className="w-full px-4 py-2.5 rounded-lg border font-display text-sm"
+                                    style={{ 
+                                        background: 'var(--surface-secondary)', 
+                                        borderColor: 'var(--border-primary)',
+                                        color: 'var(--text-primary)',
+                                    }}
+                                />
+                            </div>
+
+                            {/* URL Field */}
+                            <div>
+                                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+                                    Server URL <span style={{ color: 'var(--error)' }}>*</span>
+                                </label>
+                                <input
+                                    type="url"
+                                    value={mcpForm.url}
+                                    onChange={(e) => setMcpForm(prev => ({ ...prev, url: e.target.value }))}
+                                    placeholder="https://my-mcp-server.com/api"
+                                    className="w-full px-4 py-2.5 rounded-lg border font-mono text-sm"
+                                    style={{ 
+                                        background: 'var(--surface-secondary)', 
+                                        borderColor: 'var(--border-primary)',
+                                        color: 'var(--text-primary)',
+                                    }}
+                                />
+                                <p className="text-xs mt-1" style={{ color: 'var(--text-tertiary)' }}>
+                                    The base URL of your MCP server (must expose /tools and /execute endpoints)
+                                </p>
+                            </div>
+
+                            {/* Headers Field */}
+                            <div>
+                                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+                                    Custom Headers <span style={{ color: 'var(--text-tertiary)' }}>(optional)</span>
+                                </label>
+                                <textarea
+                                    value={mcpForm.headers}
+                                    onChange={(e) => setMcpForm(prev => ({ ...prev, headers: e.target.value }))}
+                                    placeholder='{"Authorization": "Bearer your-api-key"}'
+                                    rows={3}
+                                    className="w-full px-4 py-2.5 rounded-lg border font-mono text-sm resize-none"
+                                    style={{ 
+                                        background: 'var(--surface-secondary)', 
+                                        borderColor: 'var(--border-primary)',
+                                        color: 'var(--text-primary)',
+                                    }}
+                                />
+                                <p className="text-xs mt-1" style={{ color: 'var(--text-tertiary)' }}>
+                                    JSON object with headers to include in requests
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="flex items-center justify-end gap-3 p-5 border-t" style={{ borderColor: 'var(--border-primary)' }}>
+                            <button
+                                onClick={() => { setShowMcpModal(false); setMcpForm({ name: '', url: '', headers: '' }); }}
+                                className="px-4 py-2 rounded-lg font-display text-sm font-medium border transition-all hover:bg-[var(--surface-hover)]"
+                                style={{ borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={addCustomMcp}
+                                disabled={addingMcp || !mcpForm.name.trim() || !mcpForm.url.trim()}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg font-display text-sm font-medium transition-all hover:opacity-90 disabled:opacity-50"
+                                style={{ background: 'var(--accent-primary)', color: 'white' }}
+                            >
+                                {addingMcp ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <Plus className="w-4 h-4" />
+                                )}
+                                Add Server
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Custom MCP Modal */}
+            {showMcpModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}>
+                    <div 
+                        className="w-full max-w-lg mx-4 rounded-xl border shadow-2xl"
+                        style={{ background: 'var(--surface-primary)', borderColor: 'var(--border-primary)' }}
+                    >
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between p-5 border-b" style={{ borderColor: 'var(--border-primary)' }}>
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'var(--accent-muted)' }}>
+                                    <Server className="w-5 h-5" style={{ color: 'var(--accent-primary)' }} />
+                                </div>
+                                <div>
+                                    <h2 className="font-display font-semibold" style={{ color: 'var(--text-primary)' }}>Add Custom MCP Server</h2>
+                                    <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>Connect your own Model Context Protocol server</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => { setShowMcpModal(false); setMcpForm({ name: '', url: '', headers: '' }); }}
+                                className="p-2 rounded-lg transition-all hover:bg-[var(--surface-hover)]"
+                            >
+                                <X className="w-5 h-5" style={{ color: 'var(--text-tertiary)' }} />
+                            </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="p-5 space-y-4">
+                            {/* Name Field */}
+                            <div>
+                                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+                                    Name <span style={{ color: 'var(--error)' }}>*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={mcpForm.name}
+                                    onChange={(e) => setMcpForm(prev => ({ ...prev, name: e.target.value }))}
+                                    placeholder="My Custom Server"
+                                    className="w-full px-4 py-2.5 rounded-lg border font-display text-sm"
+                                    style={{ 
+                                        background: 'var(--surface-secondary)', 
+                                        borderColor: 'var(--border-primary)',
+                                        color: 'var(--text-primary)',
+                                    }}
+                                />
+                            </div>
+
+                            {/* URL Field */}
+                            <div>
+                                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+                                    Server URL <span style={{ color: 'var(--error)' }}>*</span>
+                                </label>
+                                <input
+                                    type="url"
+                                    value={mcpForm.url}
+                                    onChange={(e) => setMcpForm(prev => ({ ...prev, url: e.target.value }))}
+                                    placeholder="https://my-mcp-server.com/api"
+                                    className="w-full px-4 py-2.5 rounded-lg border font-mono text-sm"
+                                    style={{ 
+                                        background: 'var(--surface-secondary)', 
+                                        borderColor: 'var(--border-primary)',
+                                        color: 'var(--text-primary)',
+                                    }}
+                                />
+                                <p className="text-xs mt-1" style={{ color: 'var(--text-tertiary)' }}>
+                                    The base URL of your MCP server (must expose /tools and /execute endpoints)
+                                </p>
+                            </div>
+
+                            {/* Headers Field */}
+                            <div>
+                                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+                                    Custom Headers <span style={{ color: 'var(--text-tertiary)' }}>(optional)</span>
+                                </label>
+                                <textarea
+                                    value={mcpForm.headers}
+                                    onChange={(e) => setMcpForm(prev => ({ ...prev, headers: e.target.value }))}
+                                    placeholder='{"Authorization": "Bearer your-api-key"}'
+                                    rows={3}
+                                    className="w-full px-4 py-2.5 rounded-lg border font-mono text-sm resize-none"
+                                    style={{ 
+                                        background: 'var(--surface-secondary)', 
+                                        borderColor: 'var(--border-primary)',
+                                        color: 'var(--text-primary)',
+                                    }}
+                                />
+                                <p className="text-xs mt-1" style={{ color: 'var(--text-tertiary)' }}>
+                                    JSON object with headers to include in requests
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="flex items-center justify-end gap-3 p-5 border-t" style={{ borderColor: 'var(--border-primary)' }}>
+                            <button
+                                onClick={() => { setShowMcpModal(false); setMcpForm({ name: '', url: '', headers: '' }); }}
+                                className="px-4 py-2 rounded-lg font-display text-sm font-medium border transition-all hover:bg-[var(--surface-hover)]"
+                                style={{ borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={addCustomMcp}
+                                disabled={addingMcp || !mcpForm.name.trim() || !mcpForm.url.trim()}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg font-display text-sm font-medium transition-all hover:opacity-90 disabled:opacity-50"
+                                style={{ background: 'var(--accent-primary)', color: 'white' }}
+                            >
+                                {addingMcp ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <Plus className="w-4 h-4" />
+                                )}
+                                Add Server
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>
