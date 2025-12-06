@@ -62,32 +62,26 @@ export function createSpecialistAgent(role: 'general' | 'sales' | 'marketing' | 
 // Agent metadata for UI
 export const SPECIALIST_AGENTS = [
     {
-        role: 'sales' as const,
         ...AGENT_CONFIGS.sales.identity,
         keywords: ['CRM', 'deals', 'pipeline', 'leads', 'contacts'],
     },
     {
-        role: 'marketing' as const,
         ...AGENT_CONFIGS.marketing.identity,
         keywords: ['campaigns', 'content', 'social', 'email', 'ads'],
     },
     {
-        role: 'research' as const,
         ...AGENT_CONFIGS.research.identity,
         keywords: ['search', 'analyze', 'investigate', 'compare'],
     },
     {
-        role: 'code' as const,
         ...AGENT_CONFIGS.code.identity,
         keywords: ['code', 'debug', 'develop', 'API', 'script'],
     },
     {
-        role: 'data' as const,
         ...AGENT_CONFIGS.data.identity,
         keywords: ['analytics', 'charts', 'spreadsheet', 'metrics'],
     },
     {
-        role: 'general' as const,
         ...AGENT_CONFIGS.general.identity,
         keywords: ['help', 'explain', 'general'],
     },
