@@ -23,6 +23,9 @@ export {
     scheduledSyncJob,
 } from "./etl-sync";
 
+// Notebook execution
+export { runNotebook } from "./notebook-runner";
+
 // Re-export types only (no runtime imports)
 export type {
     JobStatus,
@@ -30,3 +33,9 @@ export type {
     WorkflowJobPayload,
     BulkDocumentJobPayload,
 } from "./client";
+
+export type {
+    NotebookRunnerPayload,
+    NotebookRunResult,
+    CellResult,
+} from "./notebook-runner";

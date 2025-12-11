@@ -26,6 +26,8 @@ export type AuditAction =
     | 'datasource.connect'
     | 'datasource.disconnect'
     | 'datasource.sync'
+    | 'datasource.sync_complete'
+    | 'datasource.sync_failed'
     // Settings actions
     | 'settings.tools_update'
     | 'settings.update'
@@ -37,7 +39,44 @@ export type AuditAction =
     | 'rag.search'
     // Artifact actions
     | 'artifact.create'
-    | 'artifact.export';
+    | 'artifact.export'
+    // Notebook actions (NEW)
+    | 'notebook.create'
+    | 'notebook.update'
+    | 'notebook.delete'
+    | 'notebook.cell_execute'
+    | 'notebook.run_all'
+    | 'notebook.run_complete'
+    | 'notebook.run_failed'
+    | 'notebook.share'
+    | 'notebook.duplicate'
+    // Toolkit actions (NEW)
+    | 'toolkit.install'
+    | 'toolkit.uninstall'
+    | 'toolkit.configure'
+    | 'toolkit.enable'
+    | 'toolkit.disable'
+    // Tool execution actions (NEW)
+    | 'tool.execute'
+    | 'tool.success'
+    | 'tool.failed'
+    // Workflow actions (NEW)
+    | 'workflow.create'
+    | 'workflow.update'
+    | 'workflow.delete'
+    | 'workflow.execute'
+    | 'workflow.complete'
+    | 'workflow.failed'
+    | 'workflow.pause'
+    | 'workflow.resume'
+    // Agent actions (NEW)
+    | 'agent.route'
+    | 'agent.execute'
+    | 'agent.delegate'
+    // Memory actions (NEW)
+    | 'memory.store'
+    | 'memory.delete'
+    | 'memory.consolidate';
 
 export type AuditResource = 
     | 'document'
@@ -49,7 +88,12 @@ export type AuditResource =
     | 'user'
     | 'search'
     | 'artifact'
-    | 'tool';
+    | 'tool'
+    | 'notebook'    // NEW
+    | 'toolkit'     // NEW
+    | 'workflow'    // NEW
+    | 'agent'       // NEW
+    | 'memory';     // NEW
 
 interface AuditLogParams {
     userId: string;
@@ -95,9 +139,9 @@ export async function createAuditLog(params: AuditLogParams): Promise<void> {
                 // Legacy required fields
                 action.split('.')[1] || action, // action_type: 'upload', 'create', etc.
                 `${action} on ${resource}${resourceId ? ` (${resourceId})` : ''}`, // action_details
-                0, // tokens_used
-                0, // cost
-                true, // success
+                metadata.tokens_used || 0, // tokens_used
+                metadata.cost || 0, // cost
+                metadata.success !== false, // success (default true)
             ]
         );
         console.log(`[Audit] ✅ Logged: ${action} on ${resource}${resourceId ? ` (${resourceId})` : ''}`);
@@ -123,9 +167,10 @@ export function extractRequestMeta(req: Request): { ipAddress: string; userAgent
     return { ipAddress, userAgent };
 }
 
-/**
- * Convenience function to log document actions
- */
+// =============================================================================
+// Document Actions
+// =============================================================================
+
 export async function logDocumentAction(
     userId: string,
     action: 'document.upload' | 'document.update' | 'document.delete' | 'document.view' | 'document.download',
@@ -144,9 +189,10 @@ export async function logDocumentAction(
     });
 }
 
-/**
- * Convenience function to log chat actions
- */
+// =============================================================================
+// Chat Actions
+// =============================================================================
+
 export async function logChatAction(
     userId: string,
     action: 'chat.message' | 'chat.tool_call',
@@ -163,9 +209,10 @@ export async function logChatAction(
     });
 }
 
-/**
- * Convenience function to log project actions
- */
+// =============================================================================
+// Project Actions
+// =============================================================================
+
 export async function logProjectAction(
     userId: string,
     action: 'project.create' | 'project.update' | 'project.delete' | 'project.archive',
@@ -184,9 +231,10 @@ export async function logProjectAction(
     });
 }
 
-/**
- * Convenience function to log tag actions
- */
+// =============================================================================
+// Tag Actions
+// =============================================================================
+
 export async function logTagAction(
     userId: string,
     action: 'tag.create' | 'tag.update' | 'tag.delete',
@@ -205,9 +253,10 @@ export async function logTagAction(
     });
 }
 
-/**
- * Convenience function to log settings actions
- */
+// =============================================================================
+// Settings Actions
+// =============================================================================
+
 export async function logSettingsAction(
     userId: string,
     action: 'settings.tools_update' | 'settings.update',
@@ -224,9 +273,10 @@ export async function logSettingsAction(
     });
 }
 
-/**
- * Convenience function to log search/RAG actions
- */
+// =============================================================================
+// Search/RAG Actions
+// =============================================================================
+
 export async function logSearchAction(
     userId: string,
     action: 'search.query' | 'rag.search',
@@ -243,9 +293,10 @@ export async function logSearchAction(
     });
 }
 
-/**
- * Convenience function to log artifact actions
- */
+// =============================================================================
+// Artifact Actions
+// =============================================================================
+
 export async function logArtifactAction(
     userId: string,
     action: 'artifact.create' | 'artifact.export',
@@ -259,6 +310,187 @@ export async function logArtifactAction(
         action,
         resource: 'artifact',
         resourceId: artifactId,
+        metadata,
+        ...requestMeta,
+    });
+}
+
+// =============================================================================
+// Notebook Actions (NEW)
+// =============================================================================
+
+export async function logNotebookAction(
+    userId: string,
+    action: 
+        | 'notebook.create' 
+        | 'notebook.update' 
+        | 'notebook.delete' 
+        | 'notebook.cell_execute'
+        | 'notebook.run_all'
+        | 'notebook.run_complete'
+        | 'notebook.run_failed'
+        | 'notebook.share'
+        | 'notebook.duplicate',
+    notebookId: string,
+    metadata: Record<string, any> = {},
+    req?: Request
+) {
+    const requestMeta = req ? extractRequestMeta(req) : {};
+    await createAuditLog({
+        userId,
+        action,
+        resource: 'notebook',
+        resourceId: notebookId,
+        metadata,
+        ...requestMeta,
+    });
+}
+
+// =============================================================================
+// Toolkit Actions (NEW)
+// =============================================================================
+
+export async function logToolkitAction(
+    userId: string,
+    action: 
+        | 'toolkit.install' 
+        | 'toolkit.uninstall' 
+        | 'toolkit.configure'
+        | 'toolkit.enable'
+        | 'toolkit.disable',
+    toolkitId: string,
+    metadata: Record<string, any> = {},
+    req?: Request
+) {
+    const requestMeta = req ? extractRequestMeta(req) : {};
+    await createAuditLog({
+        userId,
+        action,
+        resource: 'toolkit',
+        resourceId: toolkitId,
+        metadata,
+        ...requestMeta,
+    });
+}
+
+// =============================================================================
+// Tool Execution Actions (NEW)
+// =============================================================================
+
+export async function logToolAction(
+    userId: string,
+    action: 'tool.execute' | 'tool.success' | 'tool.failed',
+    toolName: string,
+    metadata: Record<string, any> = {},
+    req?: Request
+) {
+    const requestMeta = req ? extractRequestMeta(req) : {};
+    await createAuditLog({
+        userId,
+        action,
+        resource: 'tool',
+        resourceId: toolName,
+        metadata,
+        ...requestMeta,
+    });
+}
+
+// =============================================================================
+// Workflow Actions (NEW)
+// =============================================================================
+
+export async function logWorkflowAction(
+    userId: string,
+    action: 
+        | 'workflow.create'
+        | 'workflow.update'
+        | 'workflow.delete'
+        | 'workflow.execute'
+        | 'workflow.complete'
+        | 'workflow.failed'
+        | 'workflow.pause'
+        | 'workflow.resume',
+    workflowId: string,
+    metadata: Record<string, any> = {},
+    req?: Request
+) {
+    const requestMeta = req ? extractRequestMeta(req) : {};
+    await createAuditLog({
+        userId,
+        action,
+        resource: 'workflow',
+        resourceId: workflowId,
+        metadata,
+        ...requestMeta,
+    });
+}
+
+// =============================================================================
+// Agent Actions (NEW)
+// =============================================================================
+
+export async function logAgentAction(
+    userId: string,
+    action: 'agent.route' | 'agent.execute' | 'agent.delegate',
+    agentId: string,
+    metadata: Record<string, any> = {},
+    req?: Request
+) {
+    const requestMeta = req ? extractRequestMeta(req) : {};
+    await createAuditLog({
+        userId,
+        action,
+        resource: 'agent',
+        resourceId: agentId,
+        metadata,
+        ...requestMeta,
+    });
+}
+
+// =============================================================================
+// Memory Actions (NEW)
+// =============================================================================
+
+export async function logMemoryAction(
+    userId: string,
+    action: 'memory.store' | 'memory.delete' | 'memory.consolidate',
+    memoryId: string,
+    metadata: Record<string, any> = {},
+    req?: Request
+) {
+    const requestMeta = req ? extractRequestMeta(req) : {};
+    await createAuditLog({
+        userId,
+        action,
+        resource: 'memory',
+        resourceId: memoryId,
+        metadata,
+        ...requestMeta,
+    });
+}
+
+// =============================================================================
+// Data Source Actions (NEW)
+// =============================================================================
+
+export async function logDataSourceAction(
+    userId: string,
+    action: 
+        | 'datasource.connect'
+        | 'datasource.disconnect'
+        | 'datasource.sync'
+        | 'datasource.sync_complete'
+        | 'datasource.sync_failed',
+    dataSourceId: string,
+    metadata: Record<string, any> = {},
+    req?: Request
+) {
+    const requestMeta = req ? extractRequestMeta(req) : {};
+    await createAuditLog({
+        userId,
+        action,
+        resource: 'datasource',
+        resourceId: dataSourceId,
         metadata,
         ...requestMeta,
     });

@@ -60,7 +60,7 @@ export async function GET(
 
         return NextResponse.json({
             success: true,
-            workflow: {
+            template: {
                 id: t.id,
                 userId: t.user_id,
                 name: t.name,
@@ -181,6 +181,15 @@ export async function PUT(
             { status: 500 }
         );
     }
+}
+
+// PATCH - Partial update workflow
+export async function PATCH(
+    req: NextRequest,
+    { params }: { params: Promise<{ id: string }> }
+) {
+    // Reuse PUT logic for partial updates
+    return PUT(req, { params });
 }
 
 // DELETE - Delete workflow

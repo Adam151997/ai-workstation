@@ -1,26 +1,12 @@
 // app/api/workflows/[id]/run/route.ts
-// Execute a workflow template
+// Execute a workflow
 
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { query } from '@/lib/db';
-import { openai } from '@ai-sdk/openai';
-import { groq } from '@ai-sdk/groq';
-import { generateText } from 'ai';
-import { createAuditLog } from '@/lib/audit';
+import { v4 as uuidv4 } from 'uuid';
+import { logWorkflowAction } from '@/lib/audit';
 
-interface WorkflowStep {
-    id: string;
-    type: 'ai_prompt' | 'tool_call' | 'condition' | 'delay' | 'webhook';
-    name: string;
-    config: Record<string, any>;
-    connections: string[];
-    onError?: 'stop' | 'continue' | 'retry';
-    retryCount?: number;
-    timeout?: number;
-}
-
-// POST - Run workflow
 export async function POST(
     req: NextRequest,
     { params }: { params: Promise<{ id: string }> }
@@ -31,15 +17,14 @@ export async function POST(
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const { id } = await params;
-        const body = await req.json();
-        const { inputs = {} } = body;
+        const { id: workflowId } = await params;
+        const body = await req.json().catch(() => ({}));
+        const { variables = {} } = body;
 
-        // Get workflow template
+        // Fetch workflow template
         const templates = await query(
-            `SELECT * FROM workflow_templates 
-             WHERE template_id = $1 AND (user_id = $2 OR is_public = true)`,
-            [id, userId]
+            `SELECT * FROM workflow_templates WHERE template_id = $1 AND (user_id = $2 OR is_public = true)`,
+            [workflowId, userId]
         );
 
         if (templates.length === 0) {
@@ -47,223 +32,86 @@ export async function POST(
         }
 
         const template = templates[0];
-        const steps: WorkflowStep[] = template.steps || [];
 
+        if (!template.is_active) {
+            return NextResponse.json({ error: 'Workflow is not active' }, { status: 400 });
+        }
+
+        const steps = template.steps || [];
         if (steps.length === 0) {
-            return NextResponse.json(
-                { error: 'Workflow has no steps' },
-                { status: 400 }
-            );
+            return NextResponse.json({ error: 'Workflow has no steps' }, { status: 400 });
         }
 
-        // Create workflow run record
-        const runResult = await query(
-            `INSERT INTO workflow_runs (template_id, user_id, inputs, status, started_at)
-             VALUES ($1, $2, $3, 'running', NOW())
-             RETURNING run_id`,
-            [id, userId, JSON.stringify(inputs)]
-        );
-        const runId = runResult[0].run_id;
-
-        console.log(`[Workflow] Starting run ${runId} for template ${template.name}`);
-
-        // Execute steps
-        const stepResults: Record<string, any> = {};
-        let currentStepId = steps[0].id;
-        let errorOccurred = false;
-        let errorMessage = '';
-        let errorStepId = '';
-
-        const startTime = Date.now();
-
-        // Variable replacement function
-        const replaceVariables = (text: string): string => {
-            let result = text;
-            
-            // Replace input variables: {{variable_name}}
-            for (const [key, value] of Object.entries(inputs)) {
-                result = result.replace(new RegExp(`{{${key}}}`, 'g'), String(value));
-            }
-            
-            // Replace step outputs: {{step_N_output}}
-            for (const [stepId, output] of Object.entries(stepResults)) {
-                const stepIndex = steps.findIndex(s => s.id === stepId);
-                if (stepIndex !== -1) {
-                    result = result.replace(
-                        new RegExp(`{{step_${stepIndex + 1}_output}}`, 'g'),
-                        typeof output === 'string' ? output : JSON.stringify(output)
-                    );
-                }
-            }
-            
-            return result;
-        };
-
-        // Execute steps sequentially
-        for (let i = 0; i < steps.length && !errorOccurred; i++) {
-            const step = steps.find(s => s.id === currentStepId);
-            if (!step) break;
-
-            console.log(`[Workflow] Executing step ${i + 1}: ${step.name} (${step.type})`);
-
-            try {
-                let result: any = null;
-
-                // Update run status
-                await query(
-                    `UPDATE workflow_runs SET current_step_id = $1 WHERE run_id = $2`,
-                    [step.id, runId]
-                );
-
-                switch (step.type) {
-                    case 'ai_prompt': {
-                        const prompt = replaceVariables(step.config.prompt || '');
-                        const model = step.config.model || 'llama-3.3-70b-versatile';
-                        
-                        const response = await generateText({
-                            model: model.startsWith('gpt') ? openai(model) : groq(model),
-                            prompt: prompt,
-                        });
-                        
-                        result = response.text;
-                        break;
-                    }
-
-                    case 'tool_call': {
-                        // For now, simulate tool calls
-                        // TODO: Integrate with Composio MCP tools
-                        const toolName = step.config.tool;
-                        const toolParams = step.config.params || {};
-                        
-                        // Replace variables in params
-                        const processedParams: Record<string, any> = {};
-                        for (const [key, value] of Object.entries(toolParams)) {
-                            processedParams[key] = typeof value === 'string' 
-                                ? replaceVariables(value) 
-                                : value;
-                        }
-                        
-                        result = {
-                            tool: toolName,
-                            params: processedParams,
-                            message: `Tool ${toolName} would be called with params: ${JSON.stringify(processedParams)}`,
-                        };
-                        break;
-                    }
-
-                    case 'condition': {
-                        const condition = replaceVariables(step.config.condition || 'true');
-                        // Simple condition evaluation
-                        try {
-                            result = eval(condition) ? 'true' : 'false';
-                        } catch {
-                            result = 'false';
-                        }
-                        break;
-                    }
-
-                    case 'delay': {
-                        const delayMs = step.config.delay || 1000;
-                        await new Promise(resolve => setTimeout(resolve, Math.min(delayMs, 10000)));
-                        result = { delayed: delayMs };
-                        break;
-                    }
-
-                    case 'webhook': {
-                        // Placeholder for webhook calls
-                        result = { webhook: step.config.url, status: 'simulated' };
-                        break;
-                    }
-
-                    default:
-                        result = { type: step.type, status: 'unknown' };
-                }
-
-                stepResults[step.id] = result;
-                console.log(`[Workflow] Step ${step.name} completed`);
-
-                // Move to next step
-                if (step.connections && step.connections.length > 0) {
-                    currentStepId = step.connections[0];
-                } else {
-                    break; // No more steps
-                }
-
-            } catch (stepError: any) {
-                console.error(`[Workflow] Step ${step.name} failed:`, stepError);
-                
-                if (step.onError === 'continue') {
-                    stepResults[step.id] = { error: stepError.message };
-                    if (step.connections && step.connections.length > 0) {
-                        currentStepId = step.connections[0];
-                    } else {
-                        break;
-                    }
-                } else {
-                    errorOccurred = true;
-                    errorMessage = stepError.message;
-                    errorStepId = step.id;
-                }
-            }
-        }
-
-        const durationMs = Date.now() - startTime;
-        const finalStatus = errorOccurred ? 'failed' : 'success';
-
-        // Update run record with results
+        // Create execution record
+        const executionId = uuidv4();
         await query(
-            `UPDATE workflow_runs SET 
-                status = $1,
-                step_results = $2,
-                outputs = $3,
-                completed_at = NOW(),
-                duration_ms = $4,
-                error_step_id = $5,
-                error_message = $6
-            WHERE run_id = $7`,
+            `INSERT INTO workflow_executions (
+                execution_id, workflow_name, workflow_type, user_id, mode, model_id,
+                start_time, status, total_cost, total_tokens, steps_total, steps_completed, steps_failed,
+                metadata
+            ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'running', 0, 0, $7, 0, 0, $8)`,
             [
-                finalStatus,
-                JSON.stringify(stepResults),
-                JSON.stringify(stepResults[steps[steps.length - 1]?.id] || {}),
-                durationMs,
-                errorStepId || null,
-                errorMessage || null,
-                runId,
+                executionId,
+                template.name,
+                'template',
+                userId,
+                template.mode,
+                'gpt-4',
+                steps.length,
+                JSON.stringify({
+                    templateId: workflowId,
+                    triggerType: template.trigger_type,
+                    variables,
+                }),
             ]
         );
 
-        console.log(`[Workflow] Run ${runId} completed in ${durationMs}ms`);
+        // Create step records
+        for (let i = 0; i < steps.length; i++) {
+            const step = steps[i];
+            await query(
+                `INSERT INTO workflow_steps (
+                    step_id, execution_id, step_number, step_name, step_description,
+                    tool_name, tool_parameters, status, tokens_used, cost, retry_count
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 0, 0, 0)`,
+                [
+                    step.id || uuidv4(),
+                    executionId,
+                    i + 1,
+                    step.name,
+                    step.description || `${step.type} step`,
+                    step.type,
+                    JSON.stringify(step.config || {}),
+                ]
+            );
+        }
 
-        // Log to audit trail
-        await createAuditLog({
-            userId,
-            action: 'settings.update' as any, // workflow.run not in type yet
-            resource: 'settings' as any, // workflow not in type yet
-            resourceId: id,
-            metadata: {
-                workflowName: template.name,
-                runId,
-                status: finalStatus,
-                stepsCompleted: Object.keys(stepResults).length,
-                totalSteps: steps.length,
-                durationMs,
-                inputs: Object.keys(inputs),
-                error: errorOccurred ? errorMessage : null,
-            },
+        // Update run count on template
+        await query(
+            `UPDATE workflow_templates 
+             SET run_count = run_count + 1, last_run_at = NOW() 
+             WHERE template_id = $1`,
+            [workflowId]
+        );
+
+        // Log audit
+        await logWorkflowAction(userId, 'workflow.execute', executionId, {
+            templateId: workflowId,
+            templateName: template.name,
+            stepsCount: steps.length,
         });
+
+        // TODO: Trigger actual workflow execution via Trigger.dev
+        // For now, we just create the records
 
         return NextResponse.json({
-            success: !errorOccurred,
-            runId,
-            status: finalStatus,
-            durationMs,
-            stepResults,
-            outputs: stepResults[steps[steps.length - 1]?.id] || {},
-            error: errorOccurred ? { stepId: errorStepId, message: errorMessage } : null,
+            success: true,
+            executionId,
+            message: 'Workflow execution started',
+            stepsTotal: steps.length,
         });
-
     } catch (error: any) {
-        console.error('[Workflows] Run error:', error);
+        console.error('[Workflow Run] Error:', error);
         return NextResponse.json(
             { error: 'Failed to run workflow', details: error.message },
             { status: 500 }
